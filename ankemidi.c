@@ -1542,6 +1542,13 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
             break;
         }
 
+        if(szFileName[0]=='\0'){
+            i=lstrlen((LPWSTR)lParam);
+            while(((LPWSTR)lParam)[i-1]!='\\')
+                i--;
+            lstrcpy(szFileName,((LPWSTR)lParam)+i);
+        }
+
         SetWindowText(hwndEditFilePath,(LPWSTR)lParam);
             
         wsprintf(szBuf,L"Type: %u",mf.wType);
@@ -1677,6 +1684,8 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
     case WM_APP_CLOSEFILE:
         if(!mf.fOpened)
             break;
+
+        szFileName[0]='\0';
 
         cLBFiltItem=SendMessage(hwndLBCBFiltTrk,LB_GETCOUNT,0,0);
         for(i=2;i<cLBFiltItem;i++){
