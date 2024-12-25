@@ -1,5 +1,5 @@
 /* For availability of getting combobox info with _WIN32_WINNT defined as 0x0400 */
-/* Copied from WinUser.h */
+/* Extracted from WinUser.h */
 
 #define CB_GETCOMBOBOXINFO          0x0164
 
