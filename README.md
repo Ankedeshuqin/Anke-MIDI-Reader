@@ -13,4 +13,4 @@ Mute tracks or channels within a track for playing.
 Analyze the tonality (accuracy is another matter).
 --- When opening a file, the number of its each note will be counted for tonality analysis (but notes of non-chromatic instruments will be excluded). You can also fill in your custom dataset of note count and then analyze the tonality. The most probable tonality will be indicated and the probability of each tonality will represented in column chart.
 
-The Microsoft Visual Studio project file (ankemidi.vcxproj) and the executable file (ankemidi.exe) is also included.
+The Microsoft Visual Studio project file (AnkeMidi.vcxproj) and the executable file (AnkeMidi.exe) is also included.
