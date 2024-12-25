@@ -11,9 +11,9 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{05DDCC9E-084A-476D-866D-190F2F950769}</ProjectGuid>
+    <ProjectGuid>{D6633623-7790-4DA1-AA4C-DDFA748E43B8}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
-    <RootNamespace>AnkeMidi</RootNamespace>
+    <RootNamespace>ankemidi</RootNamespace>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -50,6 +50,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -74,16 +75,15 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ResourceCompile Include="AnkeMidi.rc" />
+    <ClCompile Include="ankemidi.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="ankemidi.rc" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="cbinfo.h" />
-    <ClInclude Include="MidiRead.h" />
     <ClInclude Include="resource.h" />
-    <ClInclude Include="StrList.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="AnkeMidi.c" />
+    <ClInclude Include="strlist.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
