@@ -550,7 +550,7 @@ EVENT *FillStrmBuf(MIDIHDR *pmhdr, EVENT *pevtCurBuf, DWORD *pdwPrevBufEvtTk, in
 }
 
 
-LPWSTR szCmdFilePath = NULL;
+WCHAR szCmdFilePath[MAX_PATH] = L"";
 HINSTANCE hInstanceMain;
 HWND hwndMain;
 
@@ -1072,7 +1072,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         ofn.nMaxFileTitle = MAX_PATH;
         ofn.Flags = OFN_FILEMUSTEXIST;
 
-        if(szCmdFilePath)
+        if(szCmdFilePath[0])
             PostMessage(hwnd, WM_APP_OPENFILE, 0, (LPARAM)szCmdFilePath);
         return 0;
 
