@@ -684,7 +684,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
     static DWORD dwStartTime;
     static DWORD dwCurTempoData;
     EVENT *pevtTemp;
-    static BOOL fPlayControlling; // See the process of the MM_MOM_DONE message
+    static int iPlayCtlBufRemaining; // See the process of the MM_MOM_DONE message
 
 
     HDROP hdrop;
@@ -1292,7 +1292,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
                 dwStartTime += mmt.u.ms * iTempoR / 100;
                 SendMessage(hwndTBTime, TBM_SETPOS, TRUE, dwStartTime);
 
-                fPlayControlling = TRUE; // See the process of the MM_MOM_DONE message
+                iPlayCtlBufRemaining = 2; // See the process of the MM_MOM_DONE message
                 midiStreamStop(hms);
                 break;
             }
@@ -1441,7 +1441,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
             if(iCurStrmStatus != STRM_PLAY)
                 break;
 
-            fPlayControlling = TRUE; // See the process of the MM_MOM_DONE message
+            iPlayCtlBufRemaining = 2; // See the process of the MM_MOM_DONE message
             midiStreamStop(hms);
             break;
 
@@ -1476,7 +1476,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
 
                 dwStartTime = SendMessage(hwndTBTime, TBM_GETPOS, 0, 0);
 
-                fPlayControlling = TRUE; // See the process of the MM_MOM_DONE message
+                iPlayCtlBufRemaining = 2; // See the process of the MM_MOM_DONE message
                 midiStreamStop(hms);
                 break;
             }
@@ -1599,7 +1599,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
 
         dwPrevBufEvtTk = 0;
 
-        fPlayControlling = FALSE;
+        iPlayCtlBufRemaining = 0;
         return 0;
 
     case WM_APP_CLOSEFILE:
@@ -1808,12 +1808,14 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         return 0;
 
     case MM_MOM_DONE: // When one buffer has been finished outputting
-        /* Since the MM_MOM_DONE message will always be processed after the WM_APP_PLAYFROMEVENT message due to unknown reasons, even if the former is sent before the latter, the WM_APP_PLAYFROMEVENT message sending when play controlling was moved here */
-        if(fPlayControlling) {
-            if(!(pevtCurOutput = GetEvtByMs(&mf, dwStartTime, &dwPrevBufEvtTk, &dwCurTempoData)))
-                break;
-            SendMessage(hwnd, WM_APP_PLAYFROMEVT, 0, (LPARAM)pevtCurOutput);
-            fPlayControlling = FALSE;
+        /* After play controlling while playing, only when the MM_MOM_DONE message from all buffers has been received can restart playing. Use iPlayCtlBufRemaining to mark this */
+        if(iPlayCtlBufRemaining) {
+            iPlayCtlBufRemaining--;
+            if(iPlayCtlBufRemaining == 0) {
+                if(!(pevtCurOutput = GetEvtByMs(&mf, dwStartTime, &dwPrevBufEvtTk, &dwCurTempoData)))
+                    break;
+                SendMessage(hwnd, WM_APP_PLAYFROMEVT, 0, (LPARAM)pevtCurOutput);
+            }
             return 0;
         }
 
