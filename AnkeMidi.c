@@ -496,7 +496,7 @@ enum eStrmStatus{
     STRM_STOP, STRM_PLAY
 };
 
-#define STRMBUFLEN 15360
+#define STRMBUFLEN 1536
 
 EVENT *FillStrmBuf(MIDIHDR *pmhdr, EVENT *pevtCurBuf, DWORD *pdwPrevBufEvtTk, int iTransp, int iTempoR, WORD *pwTrkChnUnmuted) {
     UINT uStrmDataOffset = 0;
