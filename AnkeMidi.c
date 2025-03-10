@@ -703,8 +703,6 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         GetVersionEx(&osversioninfo);
 
         ncm.cbSize = sizeof(NONCLIENTMETRICS);
-        if(osversioninfo.dwMajorVersion < 6)
-            ncm.cbSize -= sizeof(int);
         SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, 0);
         hfontGUI = CreateFontIndirect(&ncm.lfMessageFont);
         hdc = GetDC(hwnd);
