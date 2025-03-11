@@ -356,7 +356,7 @@ BOOL ReadMidi(LPCWSTR lpszPath, MIDIFILE *pmf) {
 
     /* Complete the tempo event link */
     if(pmf->cTempoEvt == 0) { // In the extreme case of MIDI with no tempo events
-        qwMusTb = 500000 * dwCurPlayableTk;
+        qwMusTb = (DWORDLONG)500000 * dwCurPlayableTk;
         pmf->dIniTempo = 0;
     } else {
         /* Calculate the tick count of the last tempo event */
