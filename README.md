@@ -14,3 +14,5 @@ Analyze the tonality (accuracy is another matter).
 --- When opening a file, the number of its each note will be counted for tonality analysis (but notes of non-chromatic instruments will be excluded). You can also fill in your custom dataset of note count and then analyze the tonality. The most probable tonality will be indicated and the probability of each tonality will represented in column chart.
 
 The Microsoft Visual Studio project file (AnkeMidi.vcxproj) is also included.
+
+![Result](https://github.com/user-attachments/assets/956ed6d6-8aba-46ef-a71b-e5a43dee0a31)
