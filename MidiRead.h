@@ -3,7 +3,6 @@ typedef struct evt {
     DWORD dwTk;
     WORD wTrk;
     DWORD cbData; // For meta or sys-ex events
-    BOOL fUnfiltered;
     BYTE bStatus;
     BYTE bData1;
     BYTE bData2;
@@ -42,6 +41,7 @@ typedef struct mf {
     double dAvgTempo;
 
     WORD *pwTrkChnUsage; // Channel usage for each track, represented by bits
+    EVENT **ppevtTrkName; // Track name event for each track
 } MIDIFILE;
 
 BYTE ReadByte(MIDIFILE *pmf) {
@@ -140,6 +140,7 @@ BOOL ReadMidi(LPCWSTR lpszPath, MIDIFILE *pmf) {
     pfTrkIsEnd = (BOOL *)malloc(pmf->cTrk * sizeof(BOOL));
 
     pmf->pwTrkChnUsage = (WORD *)malloc(pmf->cTrk * sizeof(WORD));
+    pmf->ppevtTrkName = (EVENT **)malloc(pmf->cTrk * sizeof(EVENT *));
 
     /* Locate each track chunk and prepare for event reading */
     u = 0;
@@ -165,6 +166,7 @@ BOOL ReadMidi(LPCWSTR lpszPath, MIDIFILE *pmf) {
         pfTrkIsEnd[u] = FALSE;
 
         pmf->pwTrkChnUsage[u] = 0;
+        pmf->ppevtTrkName[u] = NULL;
 
         pmf->dwLoc = dwCurChkEndPos;
         u++;
@@ -318,6 +320,10 @@ BOOL ReadMidi(LPCWSTR lpszPath, MIDIFILE *pmf) {
                     for(u = 0; u < cbCurEvtData; u++)
                         pevtCur->abData[u] = ReadByte(pmf);
                 }
+
+                if(bCurEvtData1 == 0x03 && pmf->ppevtTrkName[wCurEvtTrk] == NULL) {
+                    pmf->ppevtTrkName[wCurEvtTrk] = pevtCur;
+                }
                 break;
 
             default:
@@ -403,6 +409,7 @@ void FreeMidi(MIDIFILE *pmf) {
     TEMPOEVENT *ptempoevtCur, *ptempoevtNext;
     
     free(pmf->pwTrkChnUsage);
+    free(pmf->ppevtTrkName);
 
     pevtCur = pmf->pevtHead;
     while(pevtCur) {

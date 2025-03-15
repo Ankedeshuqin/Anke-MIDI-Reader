@@ -9,8 +9,8 @@
 
 #pragma comment(lib, "comctl32.lib")
 
-#define DLUX(x) MulDiv(cxChar, x, 4) // x in DLUs
-#define DLUY(y) MulDiv(cyChar, y, 8) // y in DLUs
+#define DLUX(x) ((x) * cxChar / 4) // x in DLUs
+#define DLUY(y) ((y) * cyChar / 8) // y in DLUs
 
 
 #define CPAGE 4
@@ -21,7 +21,7 @@ enum ePage {
 
 enum eIDC {
     /* Controls of common pages */
-    IDC_STATUS, IDC_TC, IDC_BTNOPEN, IDC_BTNCLOSE, IDC_EDITFILEPATH, IDC_BTNPLAY, IDC_BTNSTOP, IDC_TBTIME,
+    IDC_STATUS, IDC_TC, IDC_BTNOPEN, IDC_BTNCLOSE, IDC_EDITFILEPATH, IDC_BTNPLAY, IDC_BTNSTOP, IDC_TBTIME, IDC_STATICTIME, IDC_CHECKHEX,
     /* Controls of event list page */
     IDC_STATICTYPE, IDC_STATICCTRK, IDC_STATICTB, IDC_STATICCEVT, IDC_CBFILTTRK, IDC_CBFILTCHN, IDC_CBFILTEVTTYPE, IDC_LVEVTLIST,
     /* Controls of tempo list page */
@@ -29,7 +29,7 @@ enum eIDC {
     /* Controls of play control page */
     IDC_EDITTRANSP, IDC_UDTRANSP, IDC_BTNTRANSPRESET, IDC_EDITTEMPOR, IDC_UDTEMPOR, IDC_BTNTEMPORRESET, IDC_TVMUT,
     /* Controls of tonality analyzer page */
-    IDC_EDITCNOTEFIRST, IDC_EDITCNOTETOTAL = IDC_EDITCNOTEFIRST + 12, IDC_BTNANLYZTONALITY, IDC_STATICMOSTPROBTONALITY, IDC_EDITTONALITYFIRST, IDC_STATICTONALITYBARFIRST = IDC_EDITTONALITYFIRST + 24, IDC_TTTONALITYBARFIRST = IDC_STATICTONALITYBARFIRST + 24, IDC_STATICTONALITYBARLABELFIRST = IDC_STATICTONALITYBARFIRST + 24
+    IDC_EDITCNOTEFIRST, IDC_EDITCNOTETOTAL = IDC_EDITCNOTEFIRST + 12, IDC_BTNANLYZTONALITY, IDC_STATICMOSTPROBTONALITY, IDC_EDITTONALITYFIRST, IDC_STATICTONALITYBARFIRST = IDC_EDITTONALITYFIRST + 24, IDC_STATICTONALITYBARLABELFIRST = IDC_STATICTONALITYBARFIRST + 24
 };
 
 
@@ -43,6 +43,11 @@ enum eAppMsg {
 };
 
 
+COLORREF acrEvtType[] = {
+    RGB(128, 128, 128), RGB(128, 128, 128), RGB(0, 0, 0), RGB(0, 0, 128), RGB(0, 128, 0),
+    RGB(192, 128, 0), RGB(0, 0, 255), RGB(255, 0, 255), RGB(255, 0, 0), RGB(192, 128, 128)
+};
+
 /* Filter flags */
 #define FILT_CHECKED 1
 #define FILT_AVAILABLE 0x10000
@@ -53,17 +58,17 @@ typedef struct filtstate {
     DWORD dwFiltTrk[1];
 } FILTERSTATES;
 
-int EvtGetFiltTrkIndex(EVENT *pevt) {
+int EvtGetTrkIndex(EVENT *pevt) {
     return pevt->wTrk;
 }
 
-int EvtGetFiltChnIndex(EVENT *pevt) {
+int EvtGetChnIndex(EVENT *pevt) {
     if(pevt->bStatus < 0xF0)
         return (pevt->bStatus & 0xF) + 1;
     return 0;
 }
 
-int EvtGetFiltEvtTypeIndex(EVENT *pevt) {
+int EvtGetEvtTypeIndex(EVENT *pevt) {
     switch(pevt->bStatus >> 4) {
     case 0x8:
         return 0;
@@ -83,10 +88,73 @@ int EvtGetFiltEvtTypeIndex(EVENT *pevt) {
     return 9;
 }
 
+BOOL IsEvtUnfiltered(EVENT *pevt, FILTERSTATES *pfiltstate) {
+    UINT uTrkIndex, uChnIndex, uEvtTypeIndex;
+
+    uTrkIndex = EvtGetTrkIndex(pevt);
+    uChnIndex = EvtGetChnIndex(pevt);
+    uEvtTypeIndex = EvtGetEvtTypeIndex(pevt);
+    if(
+        !(pfiltstate->dwFiltTrk[uTrkIndex] & FILT_CHECKED) ||
+        !(pfiltstate->dwFiltChn[uChnIndex] & FILT_CHECKED) ||
+        !(pfiltstate->dwFiltEvtType[uEvtTypeIndex] & FILT_CHECKED)
+    ) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
 void MakeCBFiltLists(MIDIFILE *pmf, FILTERSTATES *pfiltstate, HWND hwndCBFiltTrk, HWND hwndCBFiltChn, HWND hwndCBFiltEvtType) {
-    int i, cCBFiltItem;
+    EVENT *pevtCur;
+    UINT uTrkIndex, uChnIndex, uEvtTypeIndex;
     UINT uFiltIndex;
+
+    int i, cCBFiltItem;
     WCHAR szBuf[128];
+    LPWSTR lpszBuf;
+
+    for(uFiltIndex = 0; uFiltIndex < pmf->cTrk; uFiltIndex++)
+        pfiltstate->dwFiltTrk[uFiltIndex] &= ~FILT_AVAILABLE;
+    for(uFiltIndex = 0; uFiltIndex < 17; uFiltIndex++)
+        pfiltstate->dwFiltChn[uFiltIndex] &= ~FILT_AVAILABLE;
+    for(uFiltIndex = 0; uFiltIndex < 10; uFiltIndex++)
+        pfiltstate->dwFiltEvtType[uFiltIndex] &= ~FILT_AVAILABLE;
+
+    pevtCur = pmf->pevtHead;
+    while(pevtCur) {
+        uTrkIndex = EvtGetTrkIndex(pevtCur);
+        uChnIndex = EvtGetChnIndex(pevtCur);
+        uEvtTypeIndex = EvtGetEvtTypeIndex(pevtCur);
+        if(!IsEvtUnfiltered(pevtCur, pfiltstate)) {
+            if(
+                !(pfiltstate->dwFiltTrk[uTrkIndex] & FILT_CHECKED) &&
+                pfiltstate->dwFiltChn[uChnIndex] & FILT_CHECKED &&
+                pfiltstate->dwFiltEvtType[uEvtTypeIndex] & FILT_CHECKED
+            ) {
+                pfiltstate->dwFiltTrk[uTrkIndex] |= FILT_AVAILABLE;
+            }
+            if(
+                pfiltstate->dwFiltTrk[uTrkIndex] & FILT_CHECKED &&
+                !(pfiltstate->dwFiltChn[uChnIndex] & FILT_CHECKED) &&
+                pfiltstate->dwFiltEvtType[uEvtTypeIndex] & FILT_CHECKED
+            ) {
+                pfiltstate->dwFiltChn[uChnIndex] |= FILT_AVAILABLE;
+            }
+            if(
+                pfiltstate->dwFiltTrk[uTrkIndex] & FILT_CHECKED &&
+                pfiltstate->dwFiltChn[uChnIndex] & FILT_CHECKED &&
+                !(pfiltstate->dwFiltEvtType[uEvtTypeIndex] & FILT_CHECKED)
+            ) {
+                pfiltstate->dwFiltEvtType[uEvtTypeIndex] |= FILT_AVAILABLE;
+            }
+            pevtCur = pevtCur->pevtNext;
+            continue;
+        }
+        pfiltstate->dwFiltTrk[uTrkIndex] |= FILT_AVAILABLE;
+        pfiltstate->dwFiltChn[uChnIndex] |= FILT_AVAILABLE;
+        pfiltstate->dwFiltEvtType[uEvtTypeIndex] |= FILT_AVAILABLE;
+        pevtCur = pevtCur->pevtNext;
+    }
 
     cCBFiltItem = SendMessage(hwndCBFiltTrk, CB_GETCOUNT, 0, 0);
     for(i = 2; i < cCBFiltItem; i++)
@@ -100,9 +168,18 @@ void MakeCBFiltLists(MIDIFILE *pmf, FILTERSTATES *pfiltstate, HWND hwndCBFiltTrk
     
     for(uFiltIndex = 0, i = 2; uFiltIndex < pmf->cTrk; uFiltIndex++) {
         if(pfiltstate->dwFiltTrk[uFiltIndex] & FILT_AVAILABLE) {
-            wsprintf(szBuf, L"Track #%u", uFiltIndex);
-            SendMessage(hwndCBFiltTrk, CB_ADDSTRING, 0, (LPARAM)szBuf);
-            SendMessage(hwndCBFiltTrk, CB_SETITEMDATA, i, pfiltstate->dwFiltTrk[uFiltIndex] & FILT_CHECKED);
+            if(pmf->ppevtTrkName[uFiltIndex]) {
+                lpszBuf = (LPWSTR)malloc((pmf->ppevtTrkName[uFiltIndex]->cbData + 128) * sizeof(WCHAR));
+                ZeroMemory(lpszBuf, (pmf->ppevtTrkName[uFiltIndex]->cbData + 128) * sizeof(WCHAR));
+                wsprintf(lpszBuf, L"Track #%u (", uFiltIndex);
+                MultiByteToWideChar(CP_ACP, MB_COMPOSITE, (LPCSTR)pmf->ppevtTrkName[uFiltIndex]->abData, pmf->ppevtTrkName[uFiltIndex]->cbData, lpszBuf + lstrlen(lpszBuf), pmf->ppevtTrkName[uFiltIndex]->cbData * sizeof(WCHAR));
+                lstrcat(lpszBuf, L")");
+                SendMessage(hwndCBFiltTrk, CB_ADDSTRING, 0, (LPARAM)lpszBuf);
+                free(lpszBuf);
+            } else {
+                wsprintf(szBuf, L"Track #%u", uFiltIndex);
+                SendMessage(hwndCBFiltTrk, CB_ADDSTRING, 0, (LPARAM)szBuf);
+            }
             i++;
         }
     }
@@ -114,7 +191,6 @@ void MakeCBFiltLists(MIDIFILE *pmf, FILTERSTATES *pfiltstate, HWND hwndCBFiltTrk
                 wsprintf(szBuf, L"Channel #%u", uFiltIndex);
                 SendMessage(hwndCBFiltChn, CB_ADDSTRING, 0, (LPARAM)szBuf);
             }
-            SendMessage(hwndCBFiltChn, CB_SETITEMDATA, i, pfiltstate->dwFiltChn[uFiltIndex] & FILT_CHECKED);
             i++;
         }
     }
@@ -132,13 +208,12 @@ void MakeCBFiltLists(MIDIFILE *pmf, FILTERSTATES *pfiltstate, HWND hwndCBFiltTrk
             case 8: SendMessage(hwndCBFiltEvtType, CB_ADDSTRING, 0, (LPARAM)L"System exclusive"); break;
             case 9: SendMessage(hwndCBFiltEvtType, CB_ADDSTRING, 0, (LPARAM)L"Meta event"); break;
             }
-            SendMessage(hwndCBFiltEvtType, CB_SETITEMDATA, i, pfiltstate->dwFiltEvtType[uFiltIndex] & FILT_CHECKED);
             i++;
         }
     }
 }
 
-DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, COLORREF *pcrLVEvtListCD) {
+DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, COLORREF *pcrLVEvtListCD, BOOL fHex) {
     LVITEM lvitem;
 
     EVENT *pevtCur;
@@ -148,15 +223,7 @@ DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, CO
 
     int cSharp = 0; // For key signature events
 
-    int iFiltTrkIndex, iFiltChnIndex, iFiltEvtTypeIndex;
-    UINT uFiltIndex, u;
-
-    for(uFiltIndex = 0; uFiltIndex < pmf->cTrk; uFiltIndex++)
-        pfiltstate->dwFiltTrk[uFiltIndex] &= ~FILT_AVAILABLE;
-    for(uFiltIndex = 0; uFiltIndex < 17; uFiltIndex++)
-        pfiltstate->dwFiltChn[uFiltIndex] &= ~FILT_AVAILABLE;
-    for(uFiltIndex = 0; uFiltIndex < 10; uFiltIndex++)
-        pfiltstate->dwFiltEvtType[uFiltIndex] &= ~FILT_AVAILABLE;
+    UINT u;
 
     SendMessage(hwndLVEvtList, WM_SETREDRAW, FALSE, 0);
     ListView_DeleteAllItems(hwndLVEvtList);
@@ -164,37 +231,7 @@ DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, CO
     lvitem.mask = LVIF_TEXT;
     pevtCur = pmf->pevtHead;
     while(pevtCur) {
-        iFiltTrkIndex = EvtGetFiltTrkIndex(pevtCur);
-        iFiltChnIndex = EvtGetFiltChnIndex(pevtCur);
-        iFiltEvtTypeIndex = EvtGetFiltEvtTypeIndex(pevtCur);
-        if(
-            !(pfiltstate->dwFiltTrk[iFiltTrkIndex] & FILT_CHECKED) ||
-            !(pfiltstate->dwFiltChn[iFiltChnIndex] & FILT_CHECKED) ||
-            !(pfiltstate->dwFiltEvtType[iFiltEvtTypeIndex] & FILT_CHECKED)
-        ) {
-            if(
-                !(pfiltstate->dwFiltTrk[iFiltTrkIndex] & FILT_CHECKED) &&
-                pfiltstate->dwFiltChn[iFiltChnIndex] & FILT_CHECKED &&
-                pfiltstate->dwFiltEvtType[iFiltEvtTypeIndex] & FILT_CHECKED
-            ) {
-                pfiltstate->dwFiltTrk[iFiltTrkIndex] |= FILT_AVAILABLE;
-            }
-            if(
-                pfiltstate->dwFiltTrk[iFiltTrkIndex] & FILT_CHECKED &&
-                !(pfiltstate->dwFiltChn[iFiltChnIndex] & FILT_CHECKED) &&
-                pfiltstate->dwFiltEvtType[iFiltEvtTypeIndex] & FILT_CHECKED
-            ) {
-                pfiltstate->dwFiltChn[iFiltChnIndex] |= FILT_AVAILABLE;
-            }
-            if(
-                pfiltstate->dwFiltTrk[iFiltTrkIndex] & FILT_CHECKED &&
-                pfiltstate->dwFiltChn[iFiltChnIndex] & FILT_CHECKED &&
-                !(pfiltstate->dwFiltEvtType[iFiltEvtTypeIndex] & FILT_CHECKED)
-            ) {
-                pfiltstate->dwFiltEvtType[iFiltEvtTypeIndex] |= FILT_AVAILABLE;
-            }
-
-            pevtCur->fUnfiltered = FALSE;
+        if(!IsEvtUnfiltered(pevtCur, pfiltstate)) {
             pevtCur = pevtCur->pevtNext;
             continue;
         }
@@ -205,7 +242,6 @@ DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, CO
         lvitem.pszText = szBuf;
         ListView_InsertItem(hwndLVEvtList, &lvitem);
 
-        pfiltstate->dwFiltTrk[pevtCur->wTrk] |= FILT_AVAILABLE;
         wsprintf(szBuf, L"%u", pevtCur->wTrk);
         ListView_SetItemText(hwndLVEvtList, dwRow, 1, szBuf);
 
@@ -213,78 +249,58 @@ DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, CO
         ListView_SetItemText(hwndLVEvtList, dwRow, 3, szBuf);
 
         if(pevtCur->bStatus < 0xF0) {
-            pfiltstate->dwFiltChn[(pevtCur->bStatus & 0xF) + 1] |= FILT_AVAILABLE;
             wsprintf(szBuf, L"%u", (pevtCur->bStatus & 0xF) + 1);
             ListView_SetItemText(hwndLVEvtList, dwRow, 2, szBuf);
 
             switch(pevtCur->bStatus >> 4) {
             case 0x8:
-                pfiltstate->dwFiltEvtType[0] |= FILT_AVAILABLE;
-                pcrLVEvtListCD[dwRow] = RGB(128, 128, 128);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 4, L"Note off");
-                wsprintf(szBuf, L"%u", pevtCur->bData1);
+                wsprintf(szBuf, fHex ? L"%02X" : L"%u", pevtCur->bData1);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 5, szBuf);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 6, alpszNote[pevtCur->bData1]);
-                wsprintf(szBuf, L"%u", pevtCur->bData2);
+                wsprintf(szBuf, fHex ? L"%02X" : L"%u", pevtCur->bData2);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 7, szBuf);
                 break;
             case 0x9:
-                if(pevtCur->bData2 == 0) {
-                    pfiltstate->dwFiltEvtType[1] |= FILT_AVAILABLE;
-                    pcrLVEvtListCD[dwRow] = RGB(128, 128, 128);
-                } else {
-                    pfiltstate->dwFiltEvtType[2] |= FILT_AVAILABLE;
-                    pcrLVEvtListCD[dwRow] = RGB(0, 0, 0);
-                }
                 ListView_SetItemText(hwndLVEvtList, dwRow, 4, L"Note on");
-                wsprintf(szBuf, L"%u", pevtCur->bData1);
+                wsprintf(szBuf, fHex ? L"%02X" : L"%u", pevtCur->bData1);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 5, szBuf);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 6, alpszNote[pevtCur->bData1]);
-                wsprintf(szBuf, L"%u", pevtCur->bData2);
+                wsprintf(szBuf, fHex ? L"%02X" : L"%u", pevtCur->bData2);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 7, szBuf);
                 break;
             case 0xA:
-                pfiltstate->dwFiltEvtType[3] |= FILT_AVAILABLE;
-                pcrLVEvtListCD[dwRow] = RGB(0, 0, 128);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 4, L"Note aftertouch");
-                wsprintf(szBuf, L"%u", pevtCur->bData1);
+                wsprintf(szBuf, fHex ? L"%02X" : L"%u", pevtCur->bData1);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 5, szBuf);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 6, alpszNote[pevtCur->bData1]);
-                wsprintf(szBuf, L"%u", pevtCur->bData2);
+                wsprintf(szBuf, fHex ? L"%02X" : L"%u", pevtCur->bData2);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 7, szBuf);
                 break;
             case 0xB:
-                pfiltstate->dwFiltEvtType[4] |= FILT_AVAILABLE;
-                pcrLVEvtListCD[dwRow] = RGB(0, 128, 0);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 4, L"Controller");
-                wsprintf(szBuf, L"%u", pevtCur->bData1);
+                wsprintf(szBuf, fHex ? L"%02X" : L"%u", pevtCur->bData1);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 5, szBuf);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 6, alpszCtl[pevtCur->bData1]);
-                wsprintf(szBuf, L"%u", pevtCur->bData2);
+                wsprintf(szBuf, fHex ? L"%02X" : L"%u", pevtCur->bData2);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 7, szBuf);
                 break;
             case 0xC:
-                pfiltstate->dwFiltEvtType[5] |= FILT_AVAILABLE;
-                pcrLVEvtListCD[dwRow] = RGB(192, 128, 0);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 4, L"Program change");
-                wsprintf(szBuf, L"%u", pevtCur->bData1);
+                wsprintf(szBuf, fHex ? L"%02X" : L"%u", pevtCur->bData1);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 5, szBuf);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 6, alpszPrg[pevtCur->bData1]);
                 break;
             case 0xD:
-                pfiltstate->dwFiltEvtType[6] |= FILT_AVAILABLE;
-                pcrLVEvtListCD[dwRow] = RGB(0, 0, 255);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 4, L"Channel aftertouch");
-                wsprintf(szBuf, L"%u", pevtCur->bData1);
+                wsprintf(szBuf, fHex ? L"%02X" : L"%u", pevtCur->bData1);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 5, szBuf);
                 break;
             case 0xE:
-                pfiltstate->dwFiltEvtType[7] |= FILT_AVAILABLE;
-                pcrLVEvtListCD[dwRow] = RGB(255, 0, 255);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 4, L"Pitch bend");
-                wsprintf(szBuf, L"%u", pevtCur->bData1);
+                wsprintf(szBuf, fHex ? L"%02X" : L"%u", pevtCur->bData1);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 5, szBuf);
-                wsprintf(szBuf, L"%u", pevtCur->bData2);
+                wsprintf(szBuf, fHex ? L"%02X" : L"%u", pevtCur->bData2);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 7, szBuf);
 
                 /* Generate comment string for pitch bend events */
@@ -293,11 +309,10 @@ DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, CO
                 break;
             }
         } else {
-            pfiltstate->dwFiltChn[0] |= FILT_AVAILABLE;
             lpszData = (LPWSTR)malloc((pevtCur->cbData * 4 + 1) * sizeof(WCHAR));
             lpszData[0] = '\0';
             for(u = 0; u < pevtCur->cbData; u++) {
-                wsprintf(lpszData, L"%s%u", lpszData, pevtCur->abData[u]);
+                wsprintf(lpszData, fHex ? L"%s%02X" : L"%s%u", lpszData, pevtCur->abData[u]);
                 if(u < pevtCur->cbData - 1)
                     wsprintf(lpszData, L"%s ", lpszData);
             }
@@ -307,15 +322,11 @@ DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, CO
             switch(pevtCur->bStatus) {
             case 0xF0:
             case 0xF7:
-                pfiltstate->dwFiltEvtType[8] |= FILT_AVAILABLE;
-                pcrLVEvtListCD[dwRow] = RGB(255, 0, 0);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 4, L"System exclusive");
                 break;
             case 0xFF:
-                pfiltstate->dwFiltEvtType[9] |= FILT_AVAILABLE;
-                pcrLVEvtListCD[dwRow] = RGB(192, 128, 128);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 4, L"Meta event");
-                wsprintf(szBuf, L"%u", pevtCur->bData1);
+                wsprintf(szBuf, fHex ? L"%02X" : L"%u", pevtCur->bData1);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 5, szBuf);
                 ListView_SetItemText(hwndLVEvtList, dwRow, 6, alpszMeta[pevtCur->bData1]);
 
@@ -370,8 +381,8 @@ DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, CO
                 break;
             }
         }
+        pcrLVEvtListCD[dwRow] = acrEvtType[EvtGetEvtTypeIndex(pevtCur)];
         
-        pevtCur->fUnfiltered = TRUE;
         pevtCur = pevtCur->pevtNext;
         dwRow++;
     }
@@ -380,7 +391,7 @@ DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, CO
     return dwRow;
 }
 
-DWORD GetTempoList(HWND hwndLVTempoList, MIDIFILE *pmf) {
+DWORD GetTempoList(HWND hwndLVTempoList, MIDIFILE *pmf, BOOL fHex) {
     LVITEM lvitem;
 
     TEMPOEVENT *ptempoevtCur;
@@ -388,6 +399,7 @@ DWORD GetTempoList(HWND hwndLVTempoList, MIDIFILE *pmf) {
     WCHAR szBuf[128];
 
     SendMessage(hwndLVTempoList, WM_SETREDRAW, FALSE, 0);
+    ListView_DeleteAllItems(hwndLVTempoList);
 
     lvitem.mask = LVIF_TEXT;
     ptempoevtCur = pmf->ptempoevtHead;
@@ -404,7 +416,7 @@ DWORD GetTempoList(HWND hwndLVTempoList, MIDIFILE *pmf) {
         wsprintf(szBuf, L"%u", ptempoevtCur->cTk);
         ListView_SetItemText(hwndLVTempoList, dwRow, 2, szBuf);
 
-        wsprintf(szBuf, L"%u", ptempoevtCur->dwData);
+        wsprintf(szBuf, fHex ? L"%06X" : L"%u", ptempoevtCur->dwData);
         ListView_SetItemText(hwndLVTempoList, dwRow, 3, szBuf);
 
         swprintf(szBuf, 128, L"%f bpm", 60000000. / ptempoevtCur->dwData);
@@ -416,6 +428,23 @@ DWORD GetTempoList(HWND hwndLVTempoList, MIDIFILE *pmf) {
 
     SendMessage(hwndLVTempoList, WM_SETREDRAW, TRUE, 0);
     return dwRow;
+}
+
+void SetTimeText(HWND hwndStaticTime, double dCurTimeSec, double dDurSec, int iTempoR) {
+    WCHAR szBuf[64];
+    static int iCurTimeOld = 0, iDurOld = 0;
+    int iCurTimeNew, iDurNew;
+
+    iCurTimeNew = (int)(dCurTimeSec * 100 / iTempoR + 0.5);
+    iDurNew = (int)(dDurSec * 100 / iTempoR + 0.5);
+    if(iCurTimeNew == iCurTimeOld && iDurNew == iDurOld)
+        return;
+
+    wsprintf(szBuf, L"%02d:%02d / %02d:%02d", iCurTimeNew / 60, iCurTimeNew % 60, iDurNew / 60, iDurNew % 60);
+    SetWindowText(hwndStaticTime, szBuf);
+
+    iCurTimeOld = iCurTimeNew;
+    iDurOld = iDurNew;
 }
 
 
@@ -554,18 +583,17 @@ WCHAR szCmdFilePath[MAX_PATH] = L"";
 HINSTANCE hInstanceMain;
 HWND hwndMain;
 
-WNDPROC DefTCProc, DefStaticProc, DefLBProc;
+WNDPROC DefStaticProc, DefLBProc;
 
-LRESULT CALLBACK TempWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK PassToMainWndStaticProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch(uMsg) {
     case WM_COMMAND:
     case WM_NOTIFY:
     case WM_DRAWITEM:
-    case WM_HSCROLL:
     case WM_APP_FILTCBITEMCLK:
         return SendMessage(hwndMain, uMsg, wParam, lParam);
     }
-    return CallWindowProc(GetWindowLong(hwnd, GWL_ID) == IDC_TC ? DefTCProc : DefStaticProc, hwnd, uMsg, wParam, lParam);
+    return CallWindowProc(DefStaticProc, hwnd, uMsg, wParam, lParam);
 }
 
 LRESULT CALLBACK LBCBFiltProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
@@ -613,16 +641,16 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
 
     static HWND hwndTC;
     static TCITEM tci;
-    static RECT rcTCDisp;
     static int iCurPage = 0;
     static HWND hwndStaticPage[CPAGE];
 
-    static HWND hwndBtnOpen, hwndBtnClose, hwndEditFilePath, hwndBtnPlay, hwndBtnStop, hwndTBTime,
+    static HWND hwndBtnOpen, hwndBtnClose, hwndEditFilePath, hwndBtnPlay, hwndBtnStop, hwndTBTime, hwndStaticTime, hwndCheckHex,
         hwndStaticType, hwndStaticCTrk, hwndStaticTb, hwndStaticCEvt, hwndCBFiltTrk, hwndCBFiltChn, hwndCBFiltEvtType, hwndLBCBFiltTrk, hwndLBCBFiltChn, hwndLBCBFiltEvtType, hwndLVEvtList,
         hwndStaticIniTempo, hwndStaticAvgTempo, hwndStaticDur, hwndStaticEvtDensity, hwndLVTempoList,
         hwndEditTransp, hwndUdTransp, hwndBtnTranspReset, hwndEditTempoR, hwndUdTempoR, hwndBtnTempoRReset, hwndTVMut,
         hwndEditCNote[12], hwndEditCNoteTotal, hwndBtnAnlyzTonality, hwndStaticMostProbTonality, hwndEditTonality[24], hwndStaticTonalityBar[24], hwndStaticTonalityBarLabel[24];
     HWND hwndTemp;
+    static BOOL fHex = FALSE;
 
     COMBOBOXINFO cbi;
 
@@ -635,13 +663,13 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
     LPDRAWITEMSTRUCT lpdis;
     RECT rcCheckBox, rcText;
     UINT uState;
-    WCHAR szBuf[128];
     int i, cCBFiltItem;
     UINT uFiltIndex;
     static DWORD cEvtListRow = 0, cTempoListRow = 0;
     static COLORREF *pcrLVEvtListCD;
-    int iCBFiltTopIndex;
+    int iTopIndex;
     LPNMLVCUSTOMDRAW lplvcd;
+    
 
     static BOOL fAnlyzTonality = FALSE;
 
@@ -693,6 +721,8 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
     static WCHAR szFilePath[MAX_PATH], szFileName[MAX_PATH];
 
     UINT u;
+    WCHAR szBuf[128];
+    LPWSTR lpszBuf;
 
     
     switch(uMsg){
@@ -713,7 +743,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         ReleaseDC(hwnd, hdc);
 
 
-        /* Controls for common pages */
+        /* Controls for main window */
         hwndStatus = CreateStatusWindow(WS_CHILD | WS_VISIBLE | CCS_BOTTOM | SBARS_SIZEGRIP,
             L"", hwnd, IDC_STATUS);
         GetWindowRect(hwndStatus, &rc);
@@ -727,13 +757,56 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         ti.uFlags = TTF_SUBCLASS;
         ti.hwnd = hwnd;
 
+        hwndBtnOpen = CreateWindow(L"BUTTON", L"Open",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            DLUX(7), DLUY(7), DLUX(28), DLUY(14),
+            hwnd, (HMENU)IDC_BTNOPEN, hInstanceMain, NULL);
+        SendMessage(hwndBtnOpen, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
+        hwndBtnClose = CreateWindow(L"BUTTON", L"Close",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            DLUX(39), DLUY(7), DLUX(28), DLUY(14),
+            hwnd, (HMENU)IDC_BTNCLOSE, hInstanceMain, NULL);
+        SendMessage(hwndBtnClose, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
+        hwndEditFilePath = CreateWindow(L"EDIT", L"",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_READONLY | ES_AUTOHSCROLL,
+            0, 0, 0, 0,
+            hwnd, (HMENU)IDC_EDITFILEPATH, hInstanceMain, NULL);
+        SendMessage(hwndEditFilePath, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
+        hwndBtnPlay = CreateWindow(L"BUTTON", L"Play",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            DLUX(7), DLUY(25), DLUX(28), DLUY(14),
+            hwnd, (HMENU)IDC_BTNPLAY, hInstanceMain, NULL);
+        SendMessage(hwndBtnPlay, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
+        hwndBtnStop = CreateWindow(L"BUTTON", L"Stop",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            DLUX(39), DLUY(25), DLUX(28), DLUY(14),
+            hwnd, (HMENU)IDC_BTNSTOP, hInstanceMain, NULL);
+        SendMessage(hwndBtnStop, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
+        hwndTBTime = CreateWindow(TRACKBAR_CLASS, NULL,
+            WS_CHILD | WS_VISIBLE,
+            0, 0, 0, 0,
+            hwnd, (HMENU)IDC_TBTIME, hInstanceMain, NULL);
+        SendMessage(hwndTBTime, TBM_SETRANGEMIN, TRUE, 0);
+        SendMessage(hwndTBTime, TBM_SETRANGEMAX, TRUE, 0);
+        SendMessage(hwndTBTime, TBM_SETPOS, TRUE, 0);
+        SendMessage(hwndTBTime, TBM_SETPAGESIZE, 0, 3000);
+        hwndStaticTime = CreateWindow(L"STATIC", L"00:00 / 00:00",
+            WS_CHILD | WS_VISIBLE | SS_RIGHT,
+            0, 0, 0, 0,
+            hwnd, (HMENU)IDC_STATICTIME, hInstanceMain, NULL);
+        SendMessage(hwndStaticTime, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
+        hwndCheckHex = CreateWindow(L"BUTTON", L"Show event data in hex",
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | BS_RIGHT | BS_RIGHTBUTTON,
+            0, 0, 0, 0,
+            hwnd, (HMENU)IDC_CHECKHEX, hInstanceMain, NULL);
+        SendMessage(hwndCheckHex, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
+
+        
         hwndTC = CreateWindow(WC_TABCONTROL, NULL,
             WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
             0, 0, 0, 0,
             hwnd, (HMENU)IDC_TC, hInstanceMain, NULL);
         SendMessage(hwndTC, WM_SETFONT, (WPARAM)hfontGUI, TRUE);
-        DefTCProc = (WNDPROC)GetWindowLong(hwndTC, GWL_WNDPROC);
-        SetWindowLong(hwndTC, GWL_WNDPROC, (LONG)TempWndProc);
 
         tci.mask = TCIF_TEXT;
         tci.pszText = L"Event list";
@@ -751,82 +824,46 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
                 hwndTC, (HMENU)-1, hInstanceMain, NULL);
             if(i == 0)
                 DefStaticProc = (WNDPROC)GetWindowLong(hwndStaticPage[i], GWL_WNDPROC);
-            SetWindowLong(hwndStaticPage[i], GWL_WNDPROC, (LONG)TempWndProc);
+            SetWindowLong(hwndStaticPage[i], GWL_WNDPROC, (LONG)PassToMainWndStaticProc);
         }
         iCurPage = PAGEEVTLIST;
         ShowWindow(hwndStaticPage[iCurPage], SW_SHOW);
 
-        GetClientRect(hwnd, &rcTCDisp);
-        TabCtrl_AdjustRect(hwndTC, FALSE, &rcTCDisp);
-
-        hwndBtnOpen = CreateWindow(L"BUTTON", L"Open",
-            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            rcTCDisp.left + DLUX(7), rcTCDisp.top + DLUY(7), DLUX(28), DLUY(14),
-            hwndTC, (HMENU)IDC_BTNOPEN, hInstanceMain, NULL);
-        SendMessage(hwndBtnOpen, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
-        hwndBtnClose = CreateWindow(L"BUTTON", L"Close",
-            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            rcTCDisp.left + DLUX(39), rcTCDisp.top + DLUY(7), DLUX(28), DLUY(14),
-            hwndTC, (HMENU)IDC_BTNCLOSE, hInstanceMain, NULL);
-        SendMessage(hwndBtnClose, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
-        hwndEditFilePath = CreateWindow(L"EDIT", L"",
-            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_READONLY | ES_AUTOHSCROLL,
-            0, 0, 0, 0,
-            hwndTC, (HMENU)IDC_EDITFILEPATH, hInstanceMain, NULL);
-        SendMessage(hwndEditFilePath, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
-        hwndBtnPlay = CreateWindow(L"BUTTON", L"Play",
-            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            rcTCDisp.left + DLUX(7), rcTCDisp.top + DLUY(25), DLUX(28), DLUY(14),
-            hwndTC, (HMENU)IDC_BTNPLAY, hInstanceMain, NULL);
-        SendMessage(hwndBtnPlay, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
-        hwndBtnStop = CreateWindow(L"BUTTON", L"Stop",
-            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            rcTCDisp.left + DLUX(39), rcTCDisp.top + DLUY(25), DLUX(28), DLUY(14),
-            hwndTC, (HMENU)IDC_BTNSTOP, hInstanceMain, NULL);
-        SendMessage(hwndBtnStop, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
-        hwndTBTime = CreateWindow(TRACKBAR_CLASS, NULL,
-            WS_CHILD | WS_VISIBLE,
-            0, 0, 0, 0,
-            hwndTC, (HMENU)IDC_TBTIME, hInstanceMain, NULL);
-        SendMessage(hwndTBTime, TBM_SETRANGEMIN, TRUE, 0);
-        SendMessage(hwndTBTime, TBM_SETRANGEMAX, TRUE, 0);
-        SendMessage(hwndTBTime, TBM_SETPOS, TRUE, 0);
-
         /* Controls for event list page */
         hwndStaticType = CreateWindow(L"STATIC", L"Type: ",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            DLUX(7), DLUY(46), DLUX(56), DLUY(8),
+            DLUX(7), DLUY(7), DLUX(56), DLUY(8),
             hwndStaticPage[PAGEEVTLIST], (HMENU)IDC_STATICTYPE, hInstanceMain, NULL);
         SendMessage(hwndStaticType, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndStaticCTrk = CreateWindow(L"STATIC", L"Number of tracks: ",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            DLUX(67), DLUY(46), DLUX(104), DLUY(8),
+            DLUX(67), DLUY(7), DLUX(104), DLUY(8),
             hwndStaticPage[PAGEEVTLIST], (HMENU)IDC_STATICCTRK, hInstanceMain, NULL);
         SendMessage(hwndStaticCTrk, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndStaticTb = CreateWindow(L"STATIC", L"Timebase: ",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            DLUX(175), DLUY(46), DLUX(72), DLUY(8),
+            DLUX(175), DLUY(7), DLUX(72), DLUY(8),
             hwndStaticPage[PAGEEVTLIST], (HMENU)IDC_STATICTB, hInstanceMain, NULL);
         SendMessage(hwndStaticTb, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndStaticCEvt = CreateWindow(L"STATIC", L"Number of events: ",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            DLUX(251), DLUY(46), DLUX(104), DLUY(8),
+            DLUX(251), DLUY(7), DLUX(104), DLUY(8),
             hwndStaticPage[PAGEEVTLIST], (HMENU)IDC_STATICCEVT, hInstanceMain, NULL);
         SendMessage(hwndStaticCEvt, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
 
         hwndCBFiltTrk = CreateWindow(L"COMBOBOX", NULL,
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
-            DLUX(7), DLUY(61), DLUX(122), DLUY(162),
+            DLUX(7), DLUY(22), DLUX(122), DLUY(162),
             hwndStaticPage[PAGEEVTLIST], (HMENU)IDC_CBFILTTRK, hInstanceMain, NULL);
         SendMessage(hwndCBFiltTrk, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndCBFiltChn = CreateWindow(L"COMBOBOX", NULL,
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
-            DLUX(133), DLUY(61), DLUX(122), DLUY(162),
+            DLUX(133), DLUY(22), DLUX(122), DLUY(162),
             hwndStaticPage[PAGEEVTLIST], (HMENU)IDC_CBFILTCHN, hInstanceMain, NULL);
         SendMessage(hwndCBFiltChn, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndCBFiltEvtType = CreateWindow(L"COMBOBOX", NULL,
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
-            DLUX(259), DLUY(61), DLUX(122), DLUY(162),
+            DLUX(259), DLUY(22), DLUX(122), DLUY(162),
             hwndStaticPage[PAGEEVTLIST], (HMENU)IDC_CBFILTEVTTYPE, hInstanceMain, NULL);
         SendMessage(hwndCBFiltEvtType, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
 
@@ -889,22 +926,22 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         /* Controls for tempo list page */
         hwndStaticIniTempo = CreateWindow(L"STATIC", L"Initial tempo: ",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            DLUX(7), DLUY(46), DLUX(136), DLUY(8),
+            DLUX(7), DLUY(7), DLUX(136), DLUY(8),
             hwndStaticPage[PAGETEMPOLIST], (HMENU)IDC_STATICINITEMPO, hInstanceMain, NULL);
         SendMessage(hwndStaticIniTempo, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndStaticAvgTempo = CreateWindow(L"STATIC", L"Average tempo: ",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            DLUX(147), DLUY(46), DLUX(136), DLUY(8),
+            DLUX(147), DLUY(7), DLUX(136), DLUY(8),
             hwndStaticPage[PAGETEMPOLIST], (HMENU)IDC_STATICAVGTEMPO, hInstanceMain, NULL);
         SendMessage(hwndStaticAvgTempo, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndStaticDur = CreateWindow(L"STATIC", L"Duration: ",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            DLUX(287), DLUY(46), DLUX(108), DLUY(8),
+            DLUX(287), DLUY(7), DLUX(108), DLUY(8),
             hwndStaticPage[PAGETEMPOLIST], (HMENU)IDC_STATICDUR, hInstanceMain, NULL);
         SendMessage(hwndStaticDur, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndStaticEvtDensity = CreateWindow(L"STATIC", L"Event density: ",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            DLUX(399), DLUY(46), DLUX(144), DLUY(8),
+            DLUX(399), DLUY(7), DLUX(144), DLUY(8),
             hwndStaticPage[PAGETEMPOLIST], (HMENU)IDC_STATICEVTDENSITY, hInstanceMain, NULL);
         SendMessage(hwndStaticEvtDensity, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
 
@@ -932,12 +969,12 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         /* Controls for play control page */
         hwndTemp = CreateWindow(L"STATIC", L"Transposition:",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            DLUX(7), DLUY(49), DLUX(64), DLUY(8),
+            DLUX(7), DLUY(10), DLUX(64), DLUY(8),
             hwndStaticPage[PAGEPLAYCTL], (HMENU)-1, hInstanceMain, NULL);
         SendMessage(hwndTemp, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndEditTransp = CreateWindow(L"EDIT", NULL,
             WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_READONLY | ES_AUTOHSCROLL,
-            DLUX(74), DLUY(46), DLUX(34), DLUY(14),
+            DLUX(74), DLUY(7), DLUX(34), DLUY(14),
             hwndStaticPage[PAGEPLAYCTL], (HMENU)IDC_EDITTRANSP, hInstanceMain, NULL);
         SendMessage(hwndEditTransp, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndUdTransp = CreateWindow(UPDOWN_CLASS, NULL,
@@ -949,17 +986,17 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         SendMessage(hwndUdTransp, UDM_SETPOS, 0, 0);
         hwndBtnTranspReset = CreateWindow(L"BUTTON", L"Reset",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            DLUX(112), DLUY(46), DLUX(28), DLUY(14),
+            DLUX(112), DLUY(7), DLUX(28), DLUY(14),
             hwndStaticPage[PAGEPLAYCTL], (HMENU)IDC_BTNTRANSPRESET, hInstanceMain, NULL);
         SendMessage(hwndBtnTranspReset, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndTemp = CreateWindow(L"STATIC", L"Tempo ratio:",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            DLUX(159), DLUY(49), DLUX(56), DLUY(8),
+            DLUX(159), DLUY(10), DLUX(56), DLUY(8),
             hwndStaticPage[PAGEPLAYCTL], (HMENU)-1, hInstanceMain, NULL);
         SendMessage(hwndTemp, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndEditTempoR = CreateWindow(L"EDIT", NULL,
             WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_READONLY | ES_AUTOHSCROLL,
-            DLUX(218), DLUY(46), DLUX(34), DLUY(14),
+            DLUX(218), DLUY(7), DLUX(34), DLUY(14),
             hwndStaticPage[PAGEPLAYCTL], (HMENU)IDC_EDITTEMPOR, hInstanceMain, NULL);
         SendMessage(hwndEditTempoR, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndUdTempoR = CreateWindow(UPDOWN_CLASS, NULL,
@@ -971,17 +1008,17 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         SendMessage(hwndUdTempoR, UDM_SETPOS, 0, 100);
         hwndTemp = CreateWindow(L"STATIC", L"%",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            DLUX(255), DLUY(49), DLUX(12), DLUY(8),
+            DLUX(255), DLUY(10), DLUX(12), DLUY(8),
             hwndStaticPage[PAGEPLAYCTL], (HMENU)-1, hInstanceMain, NULL);
         SendMessage(hwndTemp, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndBtnTempoRReset = CreateWindow(L"BUTTON", L"Reset",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            DLUX(267), DLUY(46), DLUX(28), DLUY(14),
+            DLUX(267), DLUY(7), DLUX(28), DLUY(14),
             hwndStaticPage[PAGEPLAYCTL], (HMENU)IDC_BTNTEMPORRESET, hInstanceMain, NULL);
         SendMessage(hwndBtnTempoRReset, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndTemp = CreateWindow(L"STATIC", L"Muting:",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            DLUX(7), DLUY(67), DLUX(36), DLUY(8),
+            DLUX(7), DLUY(28), DLUX(36), DLUY(8),
             hwndStaticPage[PAGEPLAYCTL], (HMENU)-1, hInstanceMain, NULL);
         SendMessage(hwndTemp, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndTVMut = CreateWindow(WC_TREEVIEW, NULL,
@@ -993,34 +1030,34 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         /* Controls for tonality analyzer page */
         hwndTemp = CreateWindow(L"STATIC", L"Note count:",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            DLUX(7), DLUY(46), DLUX(68), DLUY(8),
+            DLUX(7), DLUY(7), DLUX(68), DLUY(8),
             hwndStaticPage[PAGETONALITYANLYZER], (HMENU)-1, hInstanceMain, NULL);
         SendMessage(hwndTemp, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         for(i = 0; i < 12; i++) {
             hwndTemp = CreateWindow(L"STATIC", alpszNoteLabel[i],
                 WS_CHILD | WS_VISIBLE | SS_CENTER,
-                DLUX(7 + 36 * i), DLUY(57), DLUX(32), DLUY(8),
+                DLUX(7 + 36 * i), DLUY(18), DLUX(32), DLUY(8),
                 hwndStaticPage[PAGETONALITYANLYZER], (HMENU)-1, hInstanceMain, NULL);
             SendMessage(hwndTemp, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
             hwndEditCNote[i] = CreateWindow(L"EDIT", L"",
                 WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
-                DLUX(7 + 36 * i), DLUY(68), DLUX(32), DLUY(14),
+                DLUX(7 + 36 * i), DLUY(29), DLUX(32), DLUY(14),
                 hwndStaticPage[PAGETONALITYANLYZER], (HMENU)(IDC_EDITCNOTEFIRST + i), hInstanceMain, NULL);
             SendMessage(hwndEditCNote[i], WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         }
         hwndTemp = CreateWindow(L"STATIC", L"Total",
             WS_CHILD | WS_VISIBLE | SS_CENTER,
-            DLUX(439), DLUY(57), DLUX(32), DLUY(8),
+            DLUX(439), DLUY(18), DLUX(32), DLUY(8),
             hwndStaticPage[PAGETONALITYANLYZER], (HMENU)-1, hInstanceMain, NULL);
         SendMessage(hwndTemp, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndEditCNoteTotal = CreateWindow(L"EDIT", L"0",
             WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_READONLY | ES_AUTOHSCROLL,
-            DLUX(439), DLUY(68), DLUX(32), DLUY(14),
+            DLUX(439), DLUY(29), DLUX(32), DLUY(14),
             hwndStaticPage[PAGETONALITYANLYZER], (HMENU)IDC_EDITCNOTETOTAL, hInstanceMain, NULL);
         SendMessage(hwndEditCNoteTotal, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndBtnAnlyzTonality = CreateWindow(L"BUTTON", L"Analyze tonality",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            DLUX(475), DLUY(68), DLUX(72), DLUY(14),
+            DLUX(475), DLUY(29), DLUX(72), DLUY(14),
             hwndStaticPage[PAGETONALITYANLYZER], (HMENU)IDC_BTNANLYZTONALITY, hInstanceMain, NULL);
         SendMessage(hwndBtnAnlyzTonality, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
         hwndStaticMostProbTonality = CreateWindow(L"STATIC", L"Most probable tonality: ",
@@ -1031,19 +1068,19 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         for(i = 0; i < 24; i++) {
             hwndTemp = CreateWindow(L"STATIC", alpszTonalityLabel[i],
                 WS_CHILD | WS_VISIBLE | SS_CENTER,
-                DLUX(7 + 36 * i), DLUY(104), DLUX(32), DLUY(8),
+                DLUX(7 + 36 * i), DLUY(65), DLUX(32), DLUY(8),
                 hwndStaticPage[PAGETONALITYANLYZER], (HMENU)-1, hInstanceMain, NULL);
             SendMessage(hwndTemp, WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
             hwndEditTonality[i] = CreateWindow(L"EDIT", L"",
                 WS_CHILD | WS_VISIBLE | WS_BORDER | ES_READONLY | ES_AUTOHSCROLL,
-                DLUX(7 + 36 * i), DLUY(115), DLUX(32), DLUY(14),
+                DLUX(7 + 36 * i), DLUY(76), DLUX(32), DLUY(14),
                 hwndStaticPage[PAGETONALITYANLYZER], (HMENU)(IDC_EDITTONALITYFIRST + i), hInstanceMain, NULL);
             SendMessage(hwndEditTonality[i], WM_SETFONT, (WPARAM)hfontGUI, (LPARAM)TRUE);
             hwndStaticTonalityBar[i] = CreateWindow(L"STATIC", L"",
                 WS_CHILD | WS_VISIBLE | WS_BORDER | SS_OWNERDRAW,
                 0, 0, 0, 0,
                 hwndStaticPage[PAGETONALITYANLYZER], (HMENU)(IDC_STATICTONALITYBARFIRST + i), hInstanceMain, NULL);
-            SetWindowLong(hwndStaticTonalityBar[i], GWL_WNDPROC, (LONG)TempWndProc);
+            SetWindowLong(hwndStaticTonalityBar[i], GWL_WNDPROC, (LONG)PassToMainWndStaticProc);
             hwndStaticTonalityBarLabel[i] = CreateWindow(L"STATIC", alpszTonalityLabel[i],
                 WS_CHILD | WS_VISIBLE | SS_CENTER,
                 0, 0, 0, 0,
@@ -1075,35 +1112,37 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         return 0;
 
     case WM_SIZE:
-        /* Controls for common pages */
+        /* Controls for main window */
         SendMessage(hwndStatus, uMsg, wParam, lParam);
-        MoveWindow(hwndTC, 0, 0, LOWORD(lParam), HIWORD(lParam) - cyStatus, TRUE);
-        GetClientRect(hwnd, &rcTCDisp);
-        rcTCDisp.bottom -= cyStatus;
-        TabCtrl_AdjustRect(hwndTC, FALSE, &rcTCDisp);
+        MoveWindow(hwndTC, 0, DLUY(46), LOWORD(lParam), HIWORD(lParam) - cyStatus - DLUY(46), TRUE);
+        MoveWindow(hwndEditFilePath, DLUX(71), DLUY(7), LOWORD(lParam) - DLUX(78), DLUY(14), TRUE);
+        MoveWindow(hwndTBTime, DLUX(71), DLUY(25), LOWORD(lParam) - DLUX(134), DLUY(14), TRUE);
+        MoveWindow(hwndStaticTime, LOWORD(lParam) - DLUX(59), DLUY(28), DLUX(52), DLUY(8), TRUE);
+        MoveWindow(hwndCheckHex, LOWORD(lParam) - DLUX(115), DLUY(46), DLUX(108), DLUY(10), TRUE);
+        
+        GetClientRect(hwnd, &rc);
+        rc.bottom -= cyStatus + DLUY(46);
+        TabCtrl_AdjustRect(hwndTC, FALSE, &rc);
         for(i = 0; i < CPAGE; i++) {
-            MoveWindow(hwndStaticPage[i], rcTCDisp.left, rcTCDisp.top, rcTCDisp.right - rcTCDisp.left, rcTCDisp.bottom - rcTCDisp.top, TRUE);
+            MoveWindow(hwndStaticPage[i], rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, TRUE);
         }
-
-        MoveWindow(hwndEditFilePath, rcTCDisp.left + DLUX(71), rcTCDisp.top + DLUY(7), rcTCDisp.right - rcTCDisp.left - DLUX(78), DLUY(14), TRUE);
-        MoveWindow(hwndTBTime, rcTCDisp.left + DLUX(71), rcTCDisp.top + DLUY(25), rcTCDisp.right - rcTCDisp.left - DLUX(78), DLUY(14), TRUE);
         
         /* Controls for event list page */
-        MoveWindow(hwndLVEvtList, DLUX(7), DLUY(osversioninfo.dwMajorVersion >= 6 ? 75 : 79), rcTCDisp.right - rcTCDisp.left - DLUX(14), rcTCDisp.bottom - rcTCDisp.top - DLUY(osversioninfo.dwMajorVersion >= 6 ? 82 : 86), TRUE);
+        MoveWindow(hwndLVEvtList, DLUX(7), DLUY(osversioninfo.dwMajorVersion >= 6 ? 36 : 40), rc.right - rc.left - DLUX(14), rc.bottom - rc.top - DLUY(osversioninfo.dwMajorVersion >= 6 ? 43 : 47), TRUE);
 
         /* Controls for tempo list page */
-        MoveWindow(hwndLVTempoList, DLUX(7), DLUY(61), rcTCDisp.right - rcTCDisp.left - DLUX(14), rcTCDisp.bottom - rcTCDisp.top - DLUY(68), TRUE);
+        MoveWindow(hwndLVTempoList, DLUX(7), DLUY(22), rc.right - rc.left - DLUX(14), rc.bottom - rc.top - DLUY(29), TRUE);
 
         /* Controls for play control page */
-        MoveWindow(hwndTVMut, DLUX(7), DLUY(78), rcTCDisp.right - rcTCDisp.left - DLUX(14), rcTCDisp.bottom - rcTCDisp.top - DLUY(85), TRUE);
+        MoveWindow(hwndTVMut, DLUX(7), DLUY(39), rc.right - rc.left - DLUX(14), rc.bottom - rc.top - DLUY(46), TRUE);
 
         /* Controls for tonality analyzer page */
-        MoveWindow(hwndStaticMostProbTonality, DLUX(7), DLUY(89), rcTCDisp.right - rcTCDisp.left - DLUX(7), DLUY(8), TRUE);
+        MoveWindow(hwndStaticMostProbTonality, DLUX(7), DLUY(50), rc.right - rc.left - DLUX(7), DLUY(8), TRUE);
         for(i = 0; i < 24; i++) {
-            MoveWindow(hwndStaticTonalityBar[i], DLUX(7 + 24 * i), DLUY(133), DLUX(24), rcTCDisp.bottom - rcTCDisp.top - DLUY(151), TRUE);
-            MoveWindow(hwndStaticTonalityBarLabel[i], DLUX(7 + 24 * i), rcTCDisp.bottom - rcTCDisp.top - DLUY(15), DLUX(24), DLUY(8), TRUE);
+            MoveWindow(hwndStaticTonalityBar[i], DLUX(7 + 24 * i), DLUY(94), DLUX(24), rc.bottom - rc.top - DLUY(112), TRUE);
+            MoveWindow(hwndStaticTonalityBarLabel[i], DLUX(7 + 24 * i), rc.bottom - rc.top - DLUY(15), DLUX(24), DLUY(8), TRUE);
 
-            ti.uId = IDC_TTTONALITYBARFIRST + i;
+            ti.uId = i;
             GetWindowRect(hwndStaticTonalityBar[i], &ti.rect);
             MapWindowPoints(HWND_DESKTOP, hwnd, (LPPOINT)&ti.rect, 2);
             SendMessage(hwndTool, TTM_NEWTOOLRECT, 0, (LPARAM)&ti);
@@ -1144,7 +1183,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
 
                 if(fAnlyzTonality) {
                     for(i = 0; i < 24; i++) {
-                        ti.uId = IDC_TTTONALITYBARFIRST + i;
+                        ti.uId = i;
                         if(iCurPage == PAGETONALITYANLYZER) {
                             swprintf(szBuf, 128, L"%.2f%%", dTonalityProprtn[i] * 100);
                             GetWindowRect(hwndStaticTonalityBar[i], &ti.rect);
@@ -1324,41 +1363,66 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
                 return 0;
             }
 
-            if(lpdis->itemID < 2) {
-                rcText = lpdis->rcItem;
-                if(wParam == IDC_CBFILTTRK)
-                    SendMessage(hwndLBCBFiltTrk, LB_GETTEXT, lpdis->itemID, (LPARAM)szBuf);
-                if(wParam == IDC_CBFILTCHN)
-                    SendMessage(hwndLBCBFiltChn, LB_GETTEXT, lpdis->itemID, (LPARAM)szBuf);
-                if(wParam == IDC_CBFILTEVTTYPE)
-                    SendMessage(hwndLBCBFiltEvtType, LB_GETTEXT, lpdis->itemID, (LPARAM)szBuf);
-                DrawText(hdc, szBuf, -1, &rcText, DT_VCENTER);
+            if(lpdis->itemID == 0xFFFFFFFF)
                 return 0;
-            }
 
-            rcCheckBox = lpdis->rcItem;
             rcText = lpdis->rcItem;
-            rcCheckBox.right = rcCheckBox.left + rcCheckBox.bottom - rcCheckBox.top;
-            rcText.left = rcCheckBox.right;
-
-            uState = DFCS_BUTTONCHECK;
             if(wParam == IDC_CBFILTTRK) {
-                if(SendMessage(hwndCBFiltTrk, CB_GETITEMDATA, lpdis->itemID, 0))
-                    uState |= DFCS_CHECKED;
-                SendMessage(hwndLBCBFiltTrk, LB_GETTEXT, lpdis->itemID, (LPARAM)szBuf);
+                lpszBuf = (LPWSTR)malloc((SendMessage(hwndCBFiltTrk, CB_GETLBTEXTLEN, lpdis->itemID, 0) + 1) * sizeof(WCHAR));
+                SendMessage(hwndCBFiltTrk, CB_GETLBTEXT, lpdis->itemID, (LPARAM)lpszBuf);
             }
             if(wParam == IDC_CBFILTCHN) {
-                if(SendMessage(hwndCBFiltChn, CB_GETITEMDATA, lpdis->itemID, 0))
-                    uState |= DFCS_CHECKED;
-                SendMessage(hwndLBCBFiltChn, LB_GETTEXT, lpdis->itemID, (LPARAM)szBuf);
+                lpszBuf = (LPWSTR)malloc((SendMessage(hwndCBFiltChn, CB_GETLBTEXTLEN, lpdis->itemID, 0) + 1) * sizeof(WCHAR));
+                SendMessage(hwndCBFiltChn, CB_GETLBTEXT, lpdis->itemID, (LPARAM)lpszBuf);
             }
             if(wParam == IDC_CBFILTEVTTYPE) {
-                if(SendMessage(hwndCBFiltEvtType, CB_GETITEMDATA, lpdis->itemID, 0))
-                    uState |= DFCS_CHECKED;
-                SendMessage(hwndLBCBFiltEvtType, LB_GETTEXT, lpdis->itemID, (LPARAM)szBuf);
+                lpszBuf = (LPWSTR)malloc((SendMessage(hwndCBFiltEvtType, CB_GETLBTEXTLEN, lpdis->itemID, 0) + 1) * sizeof(WCHAR));
+                SendMessage(hwndCBFiltEvtType, CB_GETLBTEXT, lpdis->itemID, (LPARAM)lpszBuf);
             }
-            DrawFrameControl(hdc, &rcCheckBox, DFC_BUTTON, uState);
-            DrawText(hdc, szBuf, -1, &rcText, DT_VCENTER);
+
+            if(lpdis->itemID >= 2) {
+                rcCheckBox = lpdis->rcItem;
+                rcCheckBox.right = rcCheckBox.left + rcCheckBox.bottom - rcCheckBox.top;
+                rcText.left = rcCheckBox.right;
+
+                uState = DFCS_BUTTONCHECK;
+                if(wParam == IDC_CBFILTTRK) {
+                    for(i = 2, uFiltIndex = 0; ; i++, uFiltIndex++) {
+                        while(!(pfiltstate->dwFiltTrk[uFiltIndex] & FILT_AVAILABLE))
+                            uFiltIndex++;
+                        if(i == lpdis->itemID)
+                            break;
+                    }
+                    if(pfiltstate->dwFiltTrk[uFiltIndex] & FILT_CHECKED)
+                        uState |= DFCS_CHECKED;
+                }
+                if(wParam == IDC_CBFILTCHN) {
+                    for(i = 2, uFiltIndex = 0; ; i++, uFiltIndex++) {
+                        while(!(pfiltstate->dwFiltChn[uFiltIndex] & FILT_AVAILABLE))
+                            uFiltIndex++;
+                        if(i == lpdis->itemID)
+                            break;
+                    }
+                    if(pfiltstate->dwFiltChn[uFiltIndex] & FILT_CHECKED)
+                        uState |= DFCS_CHECKED;
+                }
+                if(wParam == IDC_CBFILTEVTTYPE) {
+                    for(i = 2, uFiltIndex = 0; ; i++, uFiltIndex++) {
+                        while(!(pfiltstate->dwFiltEvtType[uFiltIndex] & FILT_AVAILABLE))
+                            uFiltIndex++;
+                        if(i == lpdis->itemID)
+                            break;
+                    }
+                    if(pfiltstate->dwFiltEvtType[uFiltIndex] & FILT_CHECKED)
+                        uState |= DFCS_CHECKED;
+
+                    SetTextColor(hdc, acrEvtType[uFiltIndex]);
+                }
+                DrawFrameControl(hdc, &rcCheckBox, DFC_BUTTON, uState);
+            }
+            DrawText(hdc, lpszBuf, -1, &rcText, DT_VCENTER);
+            free(lpszBuf);
+            SetTextColor(hdc, GetSysColor(COLOR_WINDOWTEXT));
         }
         return TRUE;
 
@@ -1389,7 +1453,6 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
 
             switch(iCurStrmStatus){
             case STRM_STOP: // Play
-                dwStartTime = SendMessage(hwndTBTime, TBM_GETPOS, 0, 0);
                 if(!(pevtCurOutput = GetEvtByMs(&mf, dwStartTime, &dwPrevBufEvtTk, &dwCurTempoData)))
                     break;
                 SendMessage(hwnd, WM_APP_PLAYFROMEVT, 0, (LPARAM)pevtCurOutput);
@@ -1399,7 +1462,8 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
             case STRM_PLAY: // Pause
                 mmt.wType = TIME_MS;
                 midiStreamPosition(hms, &mmt, sizeof(MMTIME));
-                SendMessage(hwndTBTime, TBM_SETPOS, TRUE, mmt.u.ms * iTempoR / 100 + dwStartTime);
+                dwStartTime += mmt.u.ms * iTempoR / 100;
+                SendMessage(hwndTBTime, TBM_SETPOS, TRUE, dwStartTime);
 
                 pevtCurOutput = NULL; // See the process of the MM_MOM_POSITIONCB message
                 fDone = TRUE;
@@ -1414,8 +1478,20 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
             SendMessage(hwnd, WM_APP_STOP, 0, 0);
             break;
 
-        case IDC_BTNANLYZTONALITY:
-            SendMessage(hwnd, WM_APP_ANLYZTONALITY, 0, 0);
+        case IDC_CHECKHEX:
+            fHex = !fHex;
+            if(!mf.fOpened)
+                break;
+            i = ListView_GetNextItem(hwndLVEvtList, -1, LVNI_SELECTED);
+            iTopIndex = ListView_GetTopIndex(hwndLVEvtList);
+            GetEvtList(hwndLVEvtList, &mf, pfiltstate, pcrLVEvtListCD, fHex);
+            ListView_SetItemState(hwndLVEvtList, i, LVIS_SELECTED, LVIS_SELECTED);
+            ListView_EnsureVisible(hwndLVEvtList, iTopIndex + ListView_GetCountPerPage(hwndLVEvtList) - 1, FALSE);
+            i = ListView_GetNextItem(hwndLVTempoList, -1, LVNI_SELECTED);
+            iTopIndex = ListView_GetTopIndex(hwndLVTempoList);
+            GetTempoList(hwndLVTempoList, &mf, fHex);
+            ListView_SetItemState(hwndLVTempoList, i, LVIS_SELECTED, LVIS_SELECTED);
+            ListView_EnsureVisible(hwndLVTempoList, iTopIndex + ListView_GetCountPerPage(hwndLVTempoList) - 1, FALSE);
             break;
 
         case IDC_EDITTRANSP:
@@ -1434,6 +1510,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
                 iTransp = GetDlgItemInt(hwndStaticPage[PAGEPLAYCTL], IDC_EDITTRANSP, NULL, TRUE);
             } else {
                 iTempoR = GetDlgItemInt(hwndStaticPage[PAGEPLAYCTL], IDC_EDITTEMPOR, NULL, FALSE);
+                SetTimeText(hwndStaticTime, (double)dwStartTime / 1000, mf.dDur, iTempoR);
             }
 
             if(iCurStrmStatus != STRM_PLAY)
@@ -1451,6 +1528,10 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
             SendMessage(hwndUdTempoR, UDM_SETPOS, 0, 100);
             break;
 
+        case IDC_BTNANLYZTONALITY:
+            SendMessage(hwnd, WM_APP_ANLYZTONALITY, 0, 0);
+            break;
+
         case ID_PLAY:
             SendMessage(hwndBtnPlay, BM_CLICK, 0, 0);
             break;
@@ -1462,22 +1543,45 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
             switch(LOWORD(wParam)) {
             case SB_THUMBTRACK:
                 fTBIsTracking = TRUE;
-                break;
-            case SB_ENDSCROLL:
-                fTBIsTracking = FALSE;
+                SetTimeText(hwndStaticTime, (double)SendMessage(hwndTBTime, TBM_GETPOS, 0, 0) / 1000, mf.dDur, iTempoR);
                 break;
             case SB_THUMBPOSITION:
+                fTBIsTracking = FALSE;
             case SB_PAGELEFT:
             case SB_PAGERIGHT:
+                dwStartTime = SendMessage(hwndTBTime, TBM_GETPOS, 0, 0);
+                SetTimeText(hwndStaticTime, (double)dwStartTime / 1000, mf.dDur, iTempoR);
                 if(iCurStrmStatus != STRM_PLAY)
                     break;
 
-                dwStartTime = SendMessage(hwndTBTime, TBM_GETPOS, 0, 0);
-
-                iPlayCtlBufRemaining = 2; // See the process of the MM_MOM_DONE message
-                midiStreamStop(hms);
+                if(!fTBIsTracking) {
+                    iPlayCtlBufRemaining = 2; // See the process of the MM_MOM_DONE message
+                    midiStreamStop(hms);
+                }
                 break;
             }
+        }
+        return 0;
+
+    case WM_KEYDOWN:
+        switch(wParam) {
+        case VK_LEFT: // Use left and right keys to control the time bar
+            fTBIsTracking = TRUE;
+            SendMessage(hwndTBTime, WM_KEYDOWN, VK_PRIOR, lParam);
+            break;
+        case VK_RIGHT:
+            fTBIsTracking = TRUE;
+            SendMessage(hwndTBTime, WM_KEYDOWN, VK_NEXT, lParam);
+            break;
+        }
+        return 0;
+
+    case WM_KEYUP:
+        switch(wParam) {
+        case VK_LEFT:
+        case VK_RIGHT:
+            SendMessage(hwnd, WM_HSCROLL, SB_THUMBPOSITION, (LPARAM)hwndTBTime);
+            break;
         }
         return 0;
 
@@ -1526,8 +1630,8 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
             pfiltstate->dwFiltEvtType[u] = FILT_CHECKED;
 
         pcrLVEvtListCD = (COLORREF *)malloc(mf.cEvt * sizeof(COLORREF));
-        cEvtListRow = GetEvtList(hwndLVEvtList, &mf, pfiltstate, pcrLVEvtListCD);
-        cTempoListRow = GetTempoList(hwndLVTempoList, &mf);
+        cEvtListRow = GetEvtList(hwndLVEvtList, &mf, pfiltstate, pcrLVEvtListCD, fHex);
+        cTempoListRow = GetTempoList(hwndLVTempoList, &mf, fHex);
 
         MakeCBFiltLists(&mf, pfiltstate, hwndCBFiltTrk, hwndCBFiltChn, hwndCBFiltEvtType);
 
@@ -1545,8 +1649,10 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
             break;
         }
 
+        dwStartTime = 0;
         SendMessage(hwndTBTime, TBM_SETRANGEMAX, TRUE, (int)(mf.dDur * 1000));
         SendMessage(hwndTBTime, TBM_SETPOS, TRUE, 0);
+        SetTimeText(hwndStaticTime, 0, mf.dDur, iTempoR);
 
         pwTrkChnUnmuted = (WORD *)malloc(mf.cTrk * sizeof(WORD));
         tvis.hInsertAfter = TVI_LAST;
@@ -1563,9 +1669,20 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
             if(!mf.pwTrkChnUsage[u])
                 continue;
             tvis.hParent = htiRoot;
-            wsprintf(szBuf, L"Track #%u", u);
-            tvis.item.pszText = szBuf;
-            htiTrk = TreeView_InsertItem(hwndTVMut, &tvis);
+            if(mf.ppevtTrkName[u]) {
+                lpszBuf = (LPWSTR)malloc((mf.ppevtTrkName[u]->cbData + 128) * sizeof(WCHAR));
+                ZeroMemory(lpszBuf, (mf.ppevtTrkName[u]->cbData + 128) * sizeof(WCHAR));
+                wsprintf(lpszBuf, L"Track #%u (", u);
+                MultiByteToWideChar(CP_ACP, MB_COMPOSITE, (LPCSTR)mf.ppevtTrkName[u]->abData, mf.ppevtTrkName[u]->cbData, lpszBuf + lstrlen(lpszBuf), mf.ppevtTrkName[u]->cbData * sizeof(WCHAR));
+                lstrcat(lpszBuf, L")");
+                tvis.item.pszText = lpszBuf;
+                htiTrk = TreeView_InsertItem(hwndTVMut, &tvis);
+                free(lpszBuf);
+            } else {
+                wsprintf(szBuf, L"Track #%u", u);
+                tvis.item.pszText = szBuf;
+                htiTrk = TreeView_InsertItem(hwndTVMut, &tvis);
+            }
             TreeView_SetCheckState(hwndTVMut, htiTrk, TRUE);
 
             tvis.hParent = htiTrk;
@@ -1606,13 +1723,13 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
 
         szFileName[0] = '\0';
 
-        cCBFiltItem = SendMessage(hwndLBCBFiltTrk, LB_GETCOUNT, 0, 0);
+        cCBFiltItem = SendMessage(hwndCBFiltTrk, CB_GETCOUNT, 0, 0);
         for(i = 2; i < cCBFiltItem; i++)
             SendMessage(hwndCBFiltTrk, CB_DELETESTRING, 2, 0);
-        cCBFiltItem = SendMessage(hwndLBCBFiltChn, LB_GETCOUNT, 0, 0);
+        cCBFiltItem = SendMessage(hwndCBFiltChn, CB_GETCOUNT, 0, 0);
         for(i = 2; i < cCBFiltItem; i++)
             SendMessage(hwndCBFiltChn, CB_DELETESTRING, 2, 0);
-        cCBFiltItem = SendMessage(hwndLBCBFiltEvtType, LB_GETCOUNT, 0, 0);
+        cCBFiltItem = SendMessage(hwndCBFiltEvtType, CB_GETCOUNT, 0, 0);
         for(i = 2; i < cCBFiltItem; i++)
             SendMessage(hwndCBFiltEvtType, CB_DELETESTRING, 2, 0);
 
@@ -1628,6 +1745,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         SetWindowText(hwndEditFilePath, L"");
         FreeMidi(&mf);
         SendMessage(hwndTBTime, TBM_SETRANGEMAX, TRUE, 0);
+        SetTimeText(hwndStaticTime, 0, 0, iTempoR);
 
         SetWindowText(hwndStaticType, L"Type: ");
         SetWindowText(hwndStaticCTrk, L"Number of tracks: ");
@@ -1655,7 +1773,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
             dTonalityProprtn[i] = 0;
             InvalidateRect(hwndStaticTonalityBar[i], NULL, TRUE);
 
-            ti.uId = IDC_TTTONALITYBARFIRST + i;
+            ti.uId = i;
             SendMessage(hwndTool, TTM_DELTOOL, 0, (LPARAM)&ti);
         }
 
@@ -1672,12 +1790,9 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         cCBFiltItem = SendMessage((HWND)lParam, CB_GETCOUNT, 0, 0);
 
         if(wParam >= 2) { // Check change
-            SendMessage((HWND)lParam, CB_SETITEMDATA, wParam, 
-                !SendMessage((HWND)lParam, CB_GETITEMDATA, wParam, 0));
-
             // Update filter states
             if((HWND)lParam == hwndCBFiltTrk) {
-                for(i = 2, uFiltIndex = 0;; i++, uFiltIndex++) {
+                for(i = 2, uFiltIndex = 0; ; i++, uFiltIndex++) {
                     while(!(pfiltstate->dwFiltTrk[uFiltIndex] & FILT_AVAILABLE))
                         uFiltIndex++;
                     if(i == wParam)
@@ -1686,7 +1801,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
                 pfiltstate->dwFiltTrk[uFiltIndex] ^= FILT_CHECKED;
             }
             if((HWND)lParam == hwndCBFiltChn) {
-                for(i = 2, uFiltIndex = 0;; i++, uFiltIndex++) {
+                for(i = 2, uFiltIndex = 0; ; i++, uFiltIndex++) {
                     while(!(pfiltstate->dwFiltChn[uFiltIndex] & FILT_AVAILABLE))
                         uFiltIndex++;
                     if(i == wParam)
@@ -1695,7 +1810,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
                 pfiltstate->dwFiltChn[uFiltIndex] ^= FILT_CHECKED;
             }
             if((HWND)lParam == hwndCBFiltEvtType) {
-                for(i = 2, uFiltIndex = 0;; i++, uFiltIndex++) {
+                for(i = 2, uFiltIndex = 0; ; i++, uFiltIndex++) {
                     while(!(pfiltstate->dwFiltEvtType[uFiltIndex] & FILT_AVAILABLE))
                         uFiltIndex++;
                     if (i == wParam)
@@ -1704,10 +1819,6 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
                 pfiltstate->dwFiltEvtType[uFiltIndex] ^= FILT_CHECKED;
             }
         } else { // Check all or check none
-            for(i = 2; i < cCBFiltItem; i++) {
-                SendMessage((HWND)lParam, CB_SETITEMDATA, i, !wParam);
-            }
-
             // Update filter states
             if((HWND)lParam == hwndCBFiltTrk) {
                 for(uFiltIndex = 0;; uFiltIndex++) {
@@ -1747,24 +1858,24 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
             }
         }
 
-        // Get event list again
-        cEvtListRow = GetEvtList(hwndLVEvtList, &mf, pfiltstate, pcrLVEvtListCD);
-        wsprintf(szBuf, L"%u event(s) in total.", cEvtListRow);
-        SendMessage(hwndStatus, SB_SETTEXT, 0, (LPARAM)szBuf);
-
-        iCBFiltTopIndex = SendMessage((HWND)lParam, LB_GETTOPINDEX, 0, 0);
+        iTopIndex = SendMessage((HWND)lParam, CB_GETTOPINDEX, 0, 0);
         SendMessage((HWND)lParam, WM_SETREDRAW, FALSE, 0);
 
         MakeCBFiltLists(&mf, pfiltstate, hwndCBFiltTrk, hwndCBFiltChn, hwndCBFiltEvtType);
 
-        SendMessage((HWND)lParam, LB_SETTOPINDEX, iCBFiltTopIndex, 0);
+        SendMessage((HWND)lParam, CB_SETTOPINDEX, iTopIndex, 0);
         SendMessage((HWND)lParam, WM_SETREDRAW, TRUE, 0);
+
+        // Get event list again
+        cEvtListRow = GetEvtList(hwndLVEvtList, &mf, pfiltstate, pcrLVEvtListCD, fHex);
+        wsprintf(szBuf, L"%u event(s) in total.", cEvtListRow);
+        SendMessage(hwndStatus, SB_SETTEXT, 0, (LPARAM)szBuf);
 
         if(iCurStrmStatus == STRM_PLAY) {
             pevtTemp = mf.pevtHead;
             uCurEvtListRow = -1;
             while(pevtTemp != pevtCurOutput) {
-                if(pevtTemp->fUnfiltered)
+                if(IsEvtUnfiltered(pevtTemp, pfiltstate))
                     uCurEvtListRow++;
                 pevtTemp = pevtTemp->pevtNext;
             }
@@ -1784,7 +1895,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         uCurTempoListRow = -1;
         while(pevtCurBuf != (EVENT *)lParam) {
             uCurOutputEvt++;
-            if(pevtCurBuf->fUnfiltered)
+            if(IsEvtUnfiltered(pevtCurBuf, pfiltstate))
                 uCurEvtListRow++;
             if(pevtCurBuf->bStatus == 0xFF && pevtCurBuf->bData1 == 0x51)
                 uCurTempoListRow++;
@@ -1832,7 +1943,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         }
 
         uCurOutputEvt++;
-        if(pevtCurOutput->fUnfiltered) {
+        if(IsEvtUnfiltered(pevtCurOutput, pfiltstate)) {
             uCurEvtListRow++;
             ListView_SetItemState(hwndLVEvtList, uCurEvtListRow, LVIS_SELECTED, LVIS_SELECTED);
             ListView_EnsureVisible(hwndLVEvtList, uCurEvtListRow, FALSE);
@@ -1846,6 +1957,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
             mmt.wType = TIME_MS;
             midiStreamPosition(hms, &mmt, sizeof(MMTIME));
             SendMessage(hwndTBTime, TBM_SETPOS, TRUE, mmt.u.ms * iTempoR / 100 + dwStartTime);
+            SetTimeText(hwndStaticTime, (double)(mmt.u.ms * iTempoR / 100 + dwStartTime) / 1000, mf.dDur, iTempoR);
         }
 
         pevtCurOutput = pevtCurOutput->pevtNext;
@@ -1865,7 +1977,9 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         if(iCurStrmStatus != STRM_STOP)
             SetWindowText(hwndBtnPlay, L"Play");
         iCurStrmStatus = STRM_STOP;
+        dwStartTime = 0;
         SendMessage(hwndTBTime, TBM_SETPOS, TRUE, 0);
+        SetTimeText(hwndStaticTime, 0, mf.dDur, iTempoR);
         return 0;
 
     case WM_APP_ANLYZTONALITY:
@@ -1882,7 +1996,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
             InvalidateRect(hwndStaticTonalityBar[i], NULL, TRUE);
 
             if(iCurPage == PAGETONALITYANLYZER) {
-                ti.uId = IDC_TTTONALITYBARFIRST + i;
+                ti.uId = i;
                 SendMessage(hwndTool, TTM_DELTOOL, 0, (LPARAM)&ti);
                 GetWindowRect(hwndStaticTonalityBar[i], &ti.rect);
                 MapWindowPoints(HWND_DESKTOP, hwnd, (LPPOINT)&ti.rect, 2);
@@ -1941,7 +2055,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     wc.cbClsExtra = 0;
     wc.cbWndExtra = 0;
     wc.hInstance = hInstance;
-    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    wc.hIcon = LoadIcon(hInstance, L"AnkeMidi");
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszMenuName = NULL;
@@ -1967,10 +2081,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
             if(msg.message == WM_KEYDOWN && msg.wParam == 'A' && GetKeyState(VK_CONTROL) < 0) {
                 hwndFocused = GetFocus();
                 GetClassName(hwndFocused, szBuf, 128);
-                if(hwndFocused && lstrcmp(szBuf, L"EDIT")){
+                if(hwndFocused && lstrcmp(szBuf, L"Edit") == 0){
                     SendMessage(hwndFocused, EM_SETSEL, 0, -1);
                     continue;
                 }
+            }
+
+            /* Pass key messages to the main window if the focus is not on Edit or Tab Control */
+            if(msg.message == WM_KEYDOWN || msg.message == WM_KEYUP) {
+                hwndFocused = GetFocus();
+                GetClassName(hwndFocused, szBuf, 128);
+                if(!(hwndFocused && (lstrcmp(szBuf, L"Edit") == 0 || lstrcmp(szBuf, WC_TABCONTROL) == 0)))
+                    msg.hwnd = hwndMain;
             }
 
             TranslateMessage(&msg);
