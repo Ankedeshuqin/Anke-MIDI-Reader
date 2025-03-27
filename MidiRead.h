@@ -286,9 +286,7 @@ BOOL ReadMidi(LPCWSTR lpszPath, MIDIFILE *pmf) {
                     dwCurTempoTk = dwCurTk;
                     dwCurTempoData = 0;
                     for(u = 0; u < 3; u++) {
-                        b = ReadByte(pmf);
-                        pevtCur->abData[u] = b;
-                        dwCurTempoData = dwCurTempoData << 8 | b;
+                        dwCurTempoData = dwCurTempoData << 8 | pmf->pb[pmf->dwLoc + u];
                     }
 
                     ptempoevtCur = (TEMPOEVENT *)malloc(sizeof(TEMPOEVENT));
@@ -316,10 +314,10 @@ BOOL ReadMidi(LPCWSTR lpszPath, MIDIFILE *pmf) {
                     dwCurPlayableTk = dwCurTk;
 
                     pmf->cTempoEvt++;
-                } else {
-                    for(u = 0; u < cbCurEvtData; u++)
-                        pevtCur->abData[u] = ReadByte(pmf);
                 }
+                
+                for(u = 0; u < cbCurEvtData; u++)
+                    pevtCur->abData[u] = ReadByte(pmf);
 
                 if(bCurEvtData1 == 0x03 && pmf->ppevtTrkName[wCurEvtTrk] == NULL) {
                     pmf->ppevtTrkName[wCurEvtTrk] = pevtCur;
