@@ -102,7 +102,6 @@ BOOL ReadMidi(LPCWSTR lpszPath, MIDIFILE *pmf) {
     DWORDLONG qwMusTb; // An intermediate value when calculating duration (equals to microsecond count * timebase)
 
     UINT u;
-    BYTE b;
     
     
     hFile = CreateFile(lpszPath, GENERIC_READ, 0, NULL,
@@ -450,4 +449,73 @@ EVENT *GetEvtByMs(MIDIFILE *pmf, DWORD dwMs, DWORD *pdwTk, DWORD *pdwCurTempoDat
     *pdwTk = dwPrevEvtTk + (qwMusTb - qwPrevMusTb) / dwCurTempoData;
     *pdwCurTempoData = dwCurTempoData;
     return pevtCur;
+}
+
+void AnalyzeTonality(UINT *pcNote, double *pdTonalityProprtn, BOOL *pfTonalityMax) {
+    const int aiMajScaleNote[] = {0, 2, 4, 5, 7, 9, 11};
+    const int aiMinScaleNote[] = {0, 2, 3, 5, 7, 8, 10, 11};
+    const int aiMajScaleNoteWeight[] = {3, 3, 3, 3, 3, 3, 3};
+    const int aiMinScaleNoteWeight[] = {3, 3, 3, 3, 3, 3, 1, 2};
+
+    double adTonality[24];
+    double dTonalityTotal = 0, dTonalityMax = 0;
+
+    int iTonalPivot, iFifthPivot, iMajThirdPivot, iMinThirdPivot, iCurScaleNotePivot;
+    double dMajThirdProprtn, dMinThirdProprtn;
+    UINT cMajThird, cMinThird, cTonalFifth, cMajScaleNote, cMinScaleNote;
+
+    int i;
+
+    for(iTonalPivot = 0; iTonalPivot < 12; iTonalPivot++) {
+        if(pcNote[iTonalPivot] > 0) {
+            iFifthPivot = (iTonalPivot + 7) % 12;
+            cTonalFifth = pcNote[iTonalPivot] + pcNote[iFifthPivot];
+
+            iMajThirdPivot = (iTonalPivot + 4) % 12;
+            iMinThirdPivot = (iTonalPivot + 3) % 12;
+            cMajThird = pcNote[iMajThirdPivot];
+            cMinThird = pcNote[iMinThirdPivot];
+            if(cMajThird + cMinThird) {
+                dMajThirdProprtn = (double)cMajThird / (cMajThird + cMinThird);
+                dMinThirdProprtn = (double)cMinThird / (cMajThird + cMinThird);
+            } else {
+                dMajThirdProprtn = 0.5;
+                dMinThirdProprtn = 0.5;
+            }
+
+            cMajScaleNote = 0;
+            cMinScaleNote = 0;
+            for(i = 0; i < 7; i++) {
+                iCurScaleNotePivot = (iTonalPivot + aiMajScaleNote[i]) % 12;
+                cMajScaleNote += pcNote[iCurScaleNotePivot] * aiMajScaleNoteWeight[i];
+            }
+            for(i = 0; i < 8; i++) {
+                iCurScaleNotePivot = (iTonalPivot + aiMinScaleNote[i]) % 12;
+                cMinScaleNote += pcNote[iCurScaleNotePivot] * aiMinScaleNoteWeight[i];
+            }
+
+            adTonality[iTonalPivot * 2] = (double)cTonalFifth * dMajThirdProprtn * cMajScaleNote; // Value for major tonalities
+            adTonality[iTonalPivot * 2 + 1] = (double)cTonalFifth * dMinThirdProprtn * cMinScaleNote; // Value for minor tonalities
+
+            dTonalityTotal += adTonality[iTonalPivot * 2] + adTonality[iTonalPivot * 2 + 1];
+        } else {
+            adTonality[iTonalPivot * 2] = 0;
+            adTonality[iTonalPivot * 2 + 1] = 0;
+        }
+    }
+
+    if(dTonalityTotal != 0) {
+        for(i = 0; i < 24; i++) {
+            pdTonalityProprtn[i] = adTonality[i] / dTonalityTotal;
+            if(adTonality[i] > dTonalityMax)
+                dTonalityMax = adTonality[i];
+        }
+        for(i = 0; i < 24; i++)
+            pfTonalityMax[i] = adTonality[i] == dTonalityMax;
+    } else {
+        for(i = 0; i < 24; i++) {
+            pdTonalityProprtn[i] = 0;
+            pfTonalityMax[i] = FALSE;
+        }
+    }
 }
