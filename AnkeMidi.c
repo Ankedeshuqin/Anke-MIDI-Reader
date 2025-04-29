@@ -213,7 +213,7 @@ void MakeCBFiltLists(MIDIFILE *pmf, FILTERSTATES *pfiltstate, HWND hwndCBFiltTrk
     }
 }
 
-DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, COLORREF *pcrLVEvtListCD, BOOL fHex) {
+DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, BOOL fHex) {
     LVITEM lvitem;
 
     EVENT *pevtCur;
@@ -228,7 +228,7 @@ DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, CO
     SendMessage(hwndLVEvtList, WM_SETREDRAW, FALSE, 0);
     ListView_DeleteAllItems(hwndLVEvtList);
 
-    lvitem.mask = LVIF_TEXT;
+    lvitem.mask = LVIF_TEXT | LVIF_PARAM;
     pevtCur = pmf->pevtHead;
     while(pevtCur) {
         if(!IsEvtUnfiltered(pevtCur, pfiltstate)) {
@@ -240,6 +240,7 @@ DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, CO
         lvitem.iSubItem = 0;
         wsprintf(szBuf, L"%u", dwRow + 1);
         lvitem.pszText = szBuf;
+        lvitem.lParam = (LPARAM)pevtCur;
         ListView_InsertItem(hwndLVEvtList, &lvitem);
 
         wsprintf(szBuf, L"%u", pevtCur->wTrk);
@@ -381,7 +382,6 @@ DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, CO
                 break;
             }
         }
-        pcrLVEvtListCD[dwRow] = acrEvtType[EvtGetEvtTypeIndex(pevtCur)];
         
         pevtCur = pevtCur->pevtNext;
         dwRow++;
@@ -595,7 +595,6 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
     int i, cCBFiltItem;
     UINT uFiltIndex;
     static DWORD cEvtListRow = 0, cTempoListRow = 0;
-    static COLORREF *pcrLVEvtListCD;
     int iTopIndex;
     LPNMLVCUSTOMDRAW lplvcd;
     
@@ -1137,7 +1136,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
                 case CDDS_PREPAINT:
                     return CDRF_NOTIFYITEMDRAW;
                 case CDDS_ITEMPREPAINT:
-                    lplvcd->clrText = pcrLVEvtListCD[lplvcd->nmcd.dwItemSpec];
+                    lplvcd->clrText = acrEvtType[EvtGetEvtTypeIndex((EVENT *)(lplvcd->nmcd.lItemlParam))]; // The user data of the list view item is set to the pointer to the corresponding event
                     return CDRF_NEWFONT;
                 }
                 break;
@@ -1413,7 +1412,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
                 break;
             i = ListView_GetNextItem(hwndLVEvtList, -1, LVNI_SELECTED);
             iTopIndex = ListView_GetTopIndex(hwndLVEvtList);
-            GetEvtList(hwndLVEvtList, &mf, pfiltstate, pcrLVEvtListCD, fHex);
+            GetEvtList(hwndLVEvtList, &mf, pfiltstate, fHex);
             ListView_SetItemState(hwndLVEvtList, i, LVIS_SELECTED, LVIS_SELECTED);
             ListView_EnsureVisible(hwndLVEvtList, iTopIndex + ListView_GetCountPerPage(hwndLVEvtList) - 1, FALSE);
             i = ListView_GetNextItem(hwndLVTempoList, -1, LVNI_SELECTED);
@@ -1558,8 +1557,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         for(u = 0; u < 10; u++)
             pfiltstate->dwFiltEvtType[u] = FILT_CHECKED;
 
-        pcrLVEvtListCD = (COLORREF *)malloc(mf.cEvt * sizeof(COLORREF));
-        cEvtListRow = GetEvtList(hwndLVEvtList, &mf, pfiltstate, pcrLVEvtListCD, fHex);
+        cEvtListRow = GetEvtList(hwndLVEvtList, &mf, pfiltstate, fHex);
         cTempoListRow = GetTempoList(hwndLVTempoList, &mf, fHex);
 
         MakeCBFiltLists(&mf, pfiltstate, hwndCBFiltTrk, hwndCBFiltChn, hwndCBFiltEvtType);
@@ -1686,7 +1684,6 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         SetWindowText(hwndStaticDur, L"Duration: ");
         SetWindowText(hwndStaticEvtDensity, L"Event density: ");
 
-        free(pcrLVEvtListCD);
         ListView_DeleteAllItems(hwndLVEvtList);
         ListView_DeleteAllItems(hwndLVTempoList);
 
@@ -1796,7 +1793,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
         SendMessage((HWND)lParam, WM_SETREDRAW, TRUE, 0);
 
         // Get event list again
-        cEvtListRow = GetEvtList(hwndLVEvtList, &mf, pfiltstate, pcrLVEvtListCD, fHex);
+        cEvtListRow = GetEvtList(hwndLVEvtList, &mf, pfiltstate, fHex);
         wsprintf(szBuf, L"%u event(s) in total.", cEvtListRow);
         SendMessage(hwndStatus, SB_SETTEXT, 0, (LPARAM)szBuf);
 
