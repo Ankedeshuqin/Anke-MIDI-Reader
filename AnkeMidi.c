@@ -401,13 +401,14 @@ DWORD GetTempoList(HWND hwndLVTempoList, MIDIFILE *pmf, BOOL fHex) {
     SendMessage(hwndLVTempoList, WM_SETREDRAW, FALSE, 0);
     ListView_DeleteAllItems(hwndLVTempoList);
 
-    lvitem.mask = LVIF_TEXT;
+    lvitem.mask = LVIF_TEXT | LVIF_PARAM;
     ptempoevtCur = pmf->ptempoevtHead;
     while(ptempoevtCur) {
         lvitem.iItem = dwRow;
         lvitem.iSubItem = 0;
         wsprintf(szBuf, L"%u", dwRow + 1);
         lvitem.pszText = szBuf;
+        lvitem.lParam = (LPARAM)ptempoevtCur;
         ListView_InsertItem(hwndLVTempoList, &lvitem);
 
         wsprintf(szBuf, L"%u", ptempoevtCur->dwTk);
