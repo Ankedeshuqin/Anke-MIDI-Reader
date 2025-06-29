@@ -80,8 +80,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="cbinfo.h" />
+    <ClInclude Include="Filter.h" />
     <ClInclude Include="MidiRead.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="SaveCSV.h" />
     <ClInclude Include="StrList.h" />
   </ItemGroup>
   <ItemGroup>

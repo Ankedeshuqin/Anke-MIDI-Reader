@@ -1,13 +1,11 @@
 #define _WIN32_WINNT 0x0400
 #include <Windows.h>
-#include <CommCtrl.h>
 #include "cbinfo.h"
-#include "resource.h"
+#include <CommCtrl.h>
 #include <stdio.h> // For float number outputting
 #include "StrList.h"
 #include "MidiRead.h"
-#include "Filter.h"
-#include "SaveCSV.h"
+#include "resource.h"
 
 #pragma comment(lib, "comctl32.lib")
 
@@ -49,6 +47,171 @@ COLORREF acrEvtType[] = {
     RGB(128, 128, 128), RGB(128, 128, 128), RGB(0, 0, 0), RGB(0, 0, 128), RGB(0, 128, 0),
     RGB(192, 128, 0), RGB(0, 0, 255), RGB(255, 0, 255), RGB(255, 0, 0), RGB(192, 128, 128)
 };
+
+/* Filter flags */
+#define FILT_CHECKED 1
+#define FILT_AVAILABLE 0x10000
+
+typedef struct filtstate {
+    DWORD dwFiltChn[17];
+    DWORD dwFiltEvtType[10];
+    DWORD dwFiltTrk[1];
+} FILTERSTATES;
+
+int EvtGetTrkIndex(EVENT *pevt) {
+    return pevt->wTrk;
+}
+
+int EvtGetChnIndex(EVENT *pevt) {
+    if(pevt->bStatus < 0xF0)
+        return (pevt->bStatus & 0xF) + 1;
+    return 0;
+}
+
+int EvtGetEvtTypeIndex(EVENT *pevt) {
+    switch(pevt->bStatus >> 4) {
+    case 0x8:
+        return 0;
+    case 0x9:
+        if(pevt->bData2 == 0)
+            return 1;
+        return 2;
+    case 0xA:
+    case 0xB:
+    case 0xC:
+    case 0xD:
+    case 0xE:
+        return (pevt->bStatus >> 4) - 7;
+    }
+    if(pevt->bStatus == 0xF0 || pevt->bStatus == 0xF7)
+        return 8;
+    return 9;
+}
+
+BOOL IsEvtUnfiltered(EVENT *pevt, FILTERSTATES *pfiltstate) {
+    UINT uTrkIndex, uChnIndex, uEvtTypeIndex;
+
+    uTrkIndex = EvtGetTrkIndex(pevt);
+    uChnIndex = EvtGetChnIndex(pevt);
+    uEvtTypeIndex = EvtGetEvtTypeIndex(pevt);
+    if(
+        !(pfiltstate->dwFiltTrk[uTrkIndex] & FILT_CHECKED) ||
+        !(pfiltstate->dwFiltChn[uChnIndex] & FILT_CHECKED) ||
+        !(pfiltstate->dwFiltEvtType[uEvtTypeIndex] & FILT_CHECKED)
+    ) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
+void MakeCBFiltLists(MIDIFILE *pmf, FILTERSTATES *pfiltstate, HWND hwndCBFiltTrk, HWND hwndCBFiltChn, HWND hwndCBFiltEvtType) {
+    EVENT *pevtCur;
+    UINT uTrkIndex, uChnIndex, uEvtTypeIndex;
+    UINT uFiltIndex;
+
+    int i, cCBFiltItem;
+    WCHAR szBuf[128];
+    LPWSTR lpszBuf;
+
+    for(uFiltIndex = 0; uFiltIndex < pmf->cTrk; uFiltIndex++)
+        pfiltstate->dwFiltTrk[uFiltIndex] &= ~FILT_AVAILABLE;
+    for(uFiltIndex = 0; uFiltIndex < 17; uFiltIndex++)
+        pfiltstate->dwFiltChn[uFiltIndex] &= ~FILT_AVAILABLE;
+    for(uFiltIndex = 0; uFiltIndex < 10; uFiltIndex++)
+        pfiltstate->dwFiltEvtType[uFiltIndex] &= ~FILT_AVAILABLE;
+
+    pevtCur = pmf->pevtHead;
+    while(pevtCur) {
+        uTrkIndex = EvtGetTrkIndex(pevtCur);
+        uChnIndex = EvtGetChnIndex(pevtCur);
+        uEvtTypeIndex = EvtGetEvtTypeIndex(pevtCur);
+        if(!IsEvtUnfiltered(pevtCur, pfiltstate)) {
+            if(
+                !(pfiltstate->dwFiltTrk[uTrkIndex] & FILT_CHECKED) &&
+                pfiltstate->dwFiltChn[uChnIndex] & FILT_CHECKED &&
+                pfiltstate->dwFiltEvtType[uEvtTypeIndex] & FILT_CHECKED
+            ) {
+                pfiltstate->dwFiltTrk[uTrkIndex] |= FILT_AVAILABLE;
+            }
+            if(
+                pfiltstate->dwFiltTrk[uTrkIndex] & FILT_CHECKED &&
+                !(pfiltstate->dwFiltChn[uChnIndex] & FILT_CHECKED) &&
+                pfiltstate->dwFiltEvtType[uEvtTypeIndex] & FILT_CHECKED
+            ) {
+                pfiltstate->dwFiltChn[uChnIndex] |= FILT_AVAILABLE;
+            }
+            if(
+                pfiltstate->dwFiltTrk[uTrkIndex] & FILT_CHECKED &&
+                pfiltstate->dwFiltChn[uChnIndex] & FILT_CHECKED &&
+                !(pfiltstate->dwFiltEvtType[uEvtTypeIndex] & FILT_CHECKED)
+            ) {
+                pfiltstate->dwFiltEvtType[uEvtTypeIndex] |= FILT_AVAILABLE;
+            }
+            pevtCur = pevtCur->pevtNext;
+            continue;
+        }
+        pfiltstate->dwFiltTrk[uTrkIndex] |= FILT_AVAILABLE;
+        pfiltstate->dwFiltChn[uChnIndex] |= FILT_AVAILABLE;
+        pfiltstate->dwFiltEvtType[uEvtTypeIndex] |= FILT_AVAILABLE;
+        pevtCur = pevtCur->pevtNext;
+    }
+
+    cCBFiltItem = SendMessage(hwndCBFiltTrk, CB_GETCOUNT, 0, 0);
+    for(i = 2; i < cCBFiltItem; i++)
+        SendMessage(hwndCBFiltTrk, CB_DELETESTRING, 2, 0);
+    cCBFiltItem = SendMessage(hwndCBFiltChn, CB_GETCOUNT, 0, 0);
+    for(i = 2; i < cCBFiltItem; i++)
+        SendMessage(hwndCBFiltChn, CB_DELETESTRING, 2, 0);
+    cCBFiltItem = SendMessage(hwndCBFiltEvtType, CB_GETCOUNT, 0, 0);
+    for(i = 2; i < cCBFiltItem; i++)
+        SendMessage(hwndCBFiltEvtType, CB_DELETESTRING, 2, 0);
+    
+    for(uFiltIndex = 0, i = 2; uFiltIndex < pmf->cTrk; uFiltIndex++) {
+        if(pfiltstate->dwFiltTrk[uFiltIndex] & FILT_AVAILABLE) {
+            if(pmf->ppevtTrkName[uFiltIndex]) {
+                lpszBuf = (LPWSTR)malloc((pmf->ppevtTrkName[uFiltIndex]->cbData + 128) * sizeof(WCHAR));
+                ZeroMemory(lpszBuf, (pmf->ppevtTrkName[uFiltIndex]->cbData + 128) * sizeof(WCHAR));
+                wsprintf(lpszBuf, L"Track #%u (", uFiltIndex);
+                MultiByteToWideChar(CP_ACP, MB_COMPOSITE, (LPCSTR)pmf->ppevtTrkName[uFiltIndex]->abData, pmf->ppevtTrkName[uFiltIndex]->cbData, lpszBuf + lstrlen(lpszBuf), pmf->ppevtTrkName[uFiltIndex]->cbData * sizeof(WCHAR));
+                lstrcat(lpszBuf, L")");
+                SendMessage(hwndCBFiltTrk, CB_ADDSTRING, 0, (LPARAM)lpszBuf);
+                free(lpszBuf);
+            } else {
+                wsprintf(szBuf, L"Track #%u", uFiltIndex);
+                SendMessage(hwndCBFiltTrk, CB_ADDSTRING, 0, (LPARAM)szBuf);
+            }
+            i++;
+        }
+    }
+    for(uFiltIndex = 0, i = 2; uFiltIndex < 17; uFiltIndex++) {
+        if(pfiltstate->dwFiltChn[uFiltIndex] & FILT_AVAILABLE) {
+            if(uFiltIndex == 0) {
+                SendMessage(hwndCBFiltChn, CB_ADDSTRING, 0, (LPARAM)L"Non-channel");
+            } else {
+                wsprintf(szBuf, L"Channel #%u", uFiltIndex);
+                SendMessage(hwndCBFiltChn, CB_ADDSTRING, 0, (LPARAM)szBuf);
+            }
+            i++;
+        }
+    }
+    for(uFiltIndex = 0, i = 2; uFiltIndex < 10; uFiltIndex++) {
+        if(pfiltstate->dwFiltEvtType[uFiltIndex] & FILT_AVAILABLE) {
+            switch(uFiltIndex){
+            case 0: SendMessage(hwndCBFiltEvtType, CB_ADDSTRING, 0, (LPARAM)L"Note off"); break;
+            case 1: SendMessage(hwndCBFiltEvtType, CB_ADDSTRING, 0, (LPARAM)L"Note on (with no velocity)"); break;
+            case 2: SendMessage(hwndCBFiltEvtType, CB_ADDSTRING, 0, (LPARAM)L"Note on (with velocity)"); break;
+            case 3: SendMessage(hwndCBFiltEvtType, CB_ADDSTRING, 0, (LPARAM)L"Note aftertouch"); break;
+            case 4: SendMessage(hwndCBFiltEvtType, CB_ADDSTRING, 0, (LPARAM)L"Controller"); break;
+            case 5: SendMessage(hwndCBFiltEvtType, CB_ADDSTRING, 0, (LPARAM)L"Program change"); break;
+            case 6: SendMessage(hwndCBFiltEvtType, CB_ADDSTRING, 0, (LPARAM)L"Channel aftertouch"); break;
+            case 7: SendMessage(hwndCBFiltEvtType, CB_ADDSTRING, 0, (LPARAM)L"Pitch bend"); break;
+            case 8: SendMessage(hwndCBFiltEvtType, CB_ADDSTRING, 0, (LPARAM)L"System exclusive"); break;
+            case 9: SendMessage(hwndCBFiltEvtType, CB_ADDSTRING, 0, (LPARAM)L"Meta event"); break;
+            }
+            i++;
+        }
+    }
+}
 
 DWORD GetEvtList(HWND hwndLVEvtList, MIDIFILE *pmf, FILTERSTATES *pfiltstate, BOOL fHex) {
     LVITEM lvitem;
@@ -388,7 +551,7 @@ LRESULT CALLBACK LBCBFiltProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
     return CallWindowProc(DefLBProc, hwnd, uMsg, wParam, lParam);
 }
 
-LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK WndProc(HWND hwnd,UINT uMsg,WPARAM wParam,LPARAM lParam){
     LPCWSTR alpszNoteLabel[] = {L"C", L"C#", L"D", L"D#", L"E", L"F", L"F#", L"G", L"G#", L"A", L"A#", L"B"};
     LPCWSTR alpszTonalityLabel[] = {L"C", L"Cm", L"Db", L"C#m", L"D", L"Dm", L"Eb", L"Ebm", L"E", L"Em", L"F", L"Fm", L"F#", L"F#m", L"G", L"Gm", L"Ab", L"G#m", L"A", L"Am", L"Bb", L"Bbm", L"B", L"Bm"};
 
@@ -436,7 +599,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     UINT uFiltIndex;
     static DWORD cEvtListRow = 0, cTempoListRow = 0;
     int iTopIndex;
-    LPNMLVCUSTOMDRAW lpnmlvcd;
+    LPNMLVCUSTOMDRAW lplvcd;
     
 
     static BOOL fAnlyzTonality = FALSE;
@@ -487,13 +650,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     WCHAR szDragFilePath[MAX_PATH];
     static OPENFILENAME ofn;
     static WCHAR szFilePath[MAX_PATH], szFileName[MAX_PATH];
-
-
-    static OPENFILENAME ofnCSV;
-    static WCHAR szCSVFilePath[MAX_PATH];
-    static HMENU hmenuEvtListSaveAsCSV, hmenuTempoListSaveAsCSV;
-    LPNMITEMACTIVATE lpia;
-
 
     UINT u;
     WCHAR szBuf[128];
@@ -869,7 +1025,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
         ofn.hwndOwner = hwnd;
         ofn.lpstrFilter = L"MIDI Files (*.mid;*.midi;*.kar;*.rmi)\0*.mid;*.midi;*.kar;*.rmi\0"
             L"All Files (*.*)\0*.*\0\0";
-        ofn.nFilterIndex = 1;
+        ofn.lpstrCustomFilter = NULL;
+        ofn.nFilterIndex = 0;
         ofn.lpstrFile = szFilePath;
         ofn.nMaxFile = MAX_PATH;
         ofn.lpstrFileTitle = szFileName;
@@ -878,21 +1035,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 
         if(szCmdFilePath[0])
             PostMessage(hwnd, WM_APP_OPENFILE, 0, (LPARAM)szCmdFilePath);
-        
-        
-        ofnCSV.lStructSize = sizeof(OPENFILENAME);
-        ofnCSV.hwndOwner = hwnd;
-        ofnCSV.lpstrFilter = L"CSV Files (*.csv)\0*.csv\0\0";
-        ofnCSV.nFilterIndex = 1;
-        ofnCSV.lpstrFile = szCSVFilePath;
-        ofnCSV.nMaxFile = MAX_PATH;
-        ofnCSV.Flags = OFN_OVERWRITEPROMPT;
-        ofnCSV.lpstrDefExt = L"csv";
-
-        hmenuEvtListSaveAsCSV = GetSubMenu(LoadMenu(hInstanceMain, L"AnkeMidi"), 0);
-        EnableMenuItem(hmenuEvtListSaveAsCSV, 0, MF_BYPOSITION | MF_GRAYED);
-        hmenuTempoListSaveAsCSV = GetSubMenu(LoadMenu(hInstanceMain, L"AnkeMidi"), 1);
-        EnableMenuItem(hmenuTempoListSaveAsCSV, 0, MF_BYPOSITION | MF_GRAYED);
         return 0;
 
     case WM_SIZE:
@@ -987,28 +1129,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
             switch(((NMHDR *)lParam)->code) {
             /* Event list custom draw */
             case NM_CUSTOMDRAW:
-                lpnmlvcd = (LPNMLVCUSTOMDRAW)lParam;
-                switch(lpnmlvcd->nmcd.dwDrawStage) {
+                lplvcd = (LPNMLVCUSTOMDRAW)lParam;
+                switch(lplvcd->nmcd.dwDrawStage) {
                 case CDDS_PREPAINT:
                     return CDRF_NOTIFYITEMDRAW;
                 case CDDS_ITEMPREPAINT:
-                    lpnmlvcd->clrText = acrEvtType[EvtGetEvtTypeIndex((EVENT *)(lpnmlvcd->nmcd.lItemlParam))]; // The user data of the list view item is set to the pointer to the corresponding event
+                    lplvcd->clrText = acrEvtType[EvtGetEvtTypeIndex((EVENT *)(lplvcd->nmcd.lItemlParam))]; // The user data of the list view item is set to the pointer to the corresponding event
                     return CDRF_NEWFONT;
                 }
                 break;
-            case NM_RCLICK:
-                lpia = (LPNMITEMACTIVATE)lParam;
-                ClientToScreen(hwndLVEvtList, &lpia->ptAction);
-                TrackPopupMenu(hmenuEvtListSaveAsCSV, TPM_LEFTALIGN | TPM_TOPALIGN, lpia->ptAction.x, lpia->ptAction.y, 0, hwnd, NULL);
-            }
-            break;
-
-        case IDC_LVTEMPOLIST:
-            switch(((NMHDR *)lParam)->code) {
-            case NM_RCLICK:
-                lpia = (LPNMITEMACTIVATE)lParam;
-                ClientToScreen(hwndLVTempoList, &lpia->ptAction);
-                TrackPopupMenu(hmenuTempoListSaveAsCSV, TPM_LEFTALIGN | TPM_TOPALIGN, lpia->ptAction.x, lpia->ptAction.y, 0, hwnd, NULL);
             }
             break;
 
@@ -1332,35 +1461,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
         case ID_PLAY:
             SendMessage(hwndBtnPlay, BM_CLICK, 0, 0);
             break;
-        
-        case ID_EVTLISTSAVEASCSV:
-            lstrcpy(szCSVFilePath, szFilePath);
-            i = lstrlen(szCSVFilePath);
-            while(szCSVFilePath[i-1] != '.' && szCSVFilePath[i-1] != '\\')
-                i--;
-            if(szCSVFilePath[i-1] == '.')
-                szCSVFilePath[i-1] = '\0';
-            lstrcat(szCSVFilePath, L"_events.csv");
-            if(!GetSaveFileName(&ofnCSV))
-                break;
-            SaveEvtListAsCSV(&mf, pfiltstate, fHex, szCSVFilePath);
-            break;
-
-        case ID_TEMPOLISTSAVEASCSV:
-            lstrcpy(szCSVFilePath, szFilePath);
-            i = lstrlen(szCSVFilePath);
-            while(szCSVFilePath[i-1] != '.' && szCSVFilePath[i-1] != '\\')
-                i--;
-            if(szCSVFilePath[i-1] == '.')
-                szCSVFilePath[i-1] = '\0';
-            lstrcat(szCSVFilePath, L"_tempos.csv");
-            if(!GetSaveFileName(&ofnCSV))
-                break;
-            SaveTempoListAsCSV(&mf, fHex, szCSVFilePath);
-            break;
         }
         return 0;
-    
+
     case WM_HSCROLL:
         if((HWND)lParam == hwndTBTime) {
             switch(LOWORD(wParam)) {
@@ -1520,9 +1623,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
             SetDlgItemInt(hwndStaticPage[PAGETONALITYANLYZER], IDC_EDITCNOTEFIRST + i, mf.acNote[i], FALSE);
         SendMessage(hwnd, WM_APP_ANLYZTONALITY, 0, 0);
 
-        EnableMenuItem(hmenuEvtListSaveAsCSV, 0, MF_BYPOSITION | MF_ENABLED);
-        EnableMenuItem(hmenuTempoListSaveAsCSV, 0, MF_BYPOSITION | MF_ENABLED);
-
         midiStreamOpen(&hms, &uDevID, 1, (DWORD)hwnd, 0, CALLBACK_WINDOW);
         for(i = 0; i < 2; i++) {
             mhdr[i].lpData = (LPSTR)malloc(STRMBUFLEN);
@@ -1555,9 +1655,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
         cCBFiltItem = SendMessage(hwndCBFiltEvtType, CB_GETCOUNT, 0, 0);
         for(i = 2; i < cCBFiltItem; i++)
             SendMessage(hwndCBFiltEvtType, CB_DELETESTRING, 2, 0);
-
-        EnableMenuItem(hmenuEvtListSaveAsCSV, 0, MF_BYPOSITION | MF_GRAYED);
-        EnableMenuItem(hmenuTempoListSaveAsCSV, 0, MF_BYPOSITION | MF_GRAYED);
 
         SendMessage(hwnd, WM_APP_STOP, 0, 0);
         for(i=0;i<2;i++){
